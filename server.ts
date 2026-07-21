@@ -113,9 +113,23 @@ Strict Guidelines:
 3. Keywords: 20 to 45 relevant tags. Single-word or short two-word phrases only. Ordered strictly by relevance (most important first). NO duplicate words. NO brand or trademark names (e.g. no Apple, Nike, GoPro, Tesla, etc.).
 4. Category: A single primary category name (e.g., Animals, Architecture, Business, Drinks, Environment, Food, Graphic Resources, Lifestyle, People, Plants, Science, Sports, Technology, Travel).`;
 
+    const ALLOWED_GEMINI_MIMES = [
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'image/webp',
+      'image/heic',
+      'image/heif',
+    ];
+
+    let safeMimeType = (mimeType || '').toLowerCase().trim();
+    if (!ALLOWED_GEMINI_MIMES.includes(safeMimeType)) {
+      safeMimeType = 'image/jpeg';
+    }
+
     const imagePart = {
       inlineData: {
-        mimeType: mimeType || 'image/jpeg',
+        mimeType: safeMimeType,
         data: base64Data,
       },
     };
@@ -190,6 +204,15 @@ Generate stock SEO metadata as JSON.`;
 
         // Advance attempt counter
         attempts++;
+
+        // If it's a 400 bad request (like invalid payload or bad image content), key rotation won't help.
+        if (
+          errStr.includes('400') ||
+          errStr.includes('invalid_argument') ||
+          errStr.includes('unsupported mime type')
+        ) {
+          throw new Error(`Invalid image content or unsupported format: ${err?.message || err}`);
+        }
 
         // If rate limit, quota exhausted or invalid key, advance global index immediately
         if (
