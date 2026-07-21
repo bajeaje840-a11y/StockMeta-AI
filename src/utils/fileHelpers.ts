@@ -142,6 +142,56 @@ export function renderSvgToPng(file: File): Promise<string> {
 }
 
 /**
+ * Downscales an image/dataUrl to max dimensions (1280px) and converts to JPEG for fast AI vision processing
+ */
+export function compressImageForAi(dataUrl: string, maxDim = 1280): Promise<{ base64Data: string; mimeType: string }> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      let width = img.width;
+      let height = img.height;
+
+      if (width > maxDim || height > maxDim) {
+        if (width > height) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width || 800;
+      canvas.height = height || 600;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        resolve({
+          base64Data: compressedDataUrl.split(',')[1],
+          mimeType: 'image/jpeg',
+        });
+      } else {
+        resolve({
+          base64Data: dataUrl.split(',')[1] || '',
+          mimeType: 'image/jpeg',
+        });
+      }
+    };
+    img.onerror = () => {
+      resolve({
+        base64Data: dataUrl.split(',')[1] || '',
+        mimeType: 'image/jpeg',
+      });
+    };
+    img.src = dataUrl;
+  });
+}
+
+/**
  * Prepares preview image data and base64 for Gemini vision model
  */
 export async function prepareFileForAi(file: File): Promise<{
@@ -182,16 +232,11 @@ export async function prepareFileForAi(file: File): Promise<{
   if (category === 'image') {
     try {
       const dataUrl = await readFileAsDataUrl(file);
-      const base64Data = dataUrl.split(',')[1];
-      let mimeType = file.type || 'image/jpeg';
-      const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
-      if (!allowedTypes.includes(mimeType.toLowerCase())) {
-        mimeType = 'image/jpeg';
-      }
+      const compressed = await compressImageForAi(dataUrl);
       return {
         previewUrl: dataUrl,
-        base64Data,
-        mimeTypeForAi: mimeType,
+        base64Data: compressed.base64Data,
+        mimeTypeForAi: compressed.mimeType,
       };
     } catch (e) {
       console.error('Error reading image file:', e);

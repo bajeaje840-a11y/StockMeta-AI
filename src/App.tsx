@@ -99,7 +99,13 @@ export default function App() {
         }),
       });
 
-      const resData = await response.json();
+      const responseText = await response.text();
+      let resData: any = {};
+      try {
+        resData = JSON.parse(responseText);
+      } catch (parseErr) {
+        throw new Error(`Server returned non-JSON error (${response.status}).`);
+      }
 
       if (!response.ok || !resData.success) {
         throw new Error(resData.error || `Server responded with status ${response.status}`);
