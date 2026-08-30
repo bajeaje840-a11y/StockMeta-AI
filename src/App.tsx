@@ -17,6 +17,7 @@ import { DEFAULT_TRADEMARK_BLOCKLIST, mapToAdobeCategory, mapToShutterstockCateg
 import { loadAiConfig, saveAiConfig, isProviderReady, AI_PROVIDERS } from './data/aiModels';
 import { getFormatCategory, prepareFileForAi } from './utils/fileHelpers';
 import { downloadAllPlatformsZip, downloadCSV, generateCSV } from './utils/csvExporter';
+import { generateGeminiMetadataDirectly, parseApiErrorMessage } from './utils/directAiService';
 
 export default function App() {
   const [files, setFiles] = useState<StockFile[]>([]);
@@ -137,45 +138,93 @@ export default function App() {
 
         const creds = getActiveAiCredentials();
 
-        // 2. Call server-side multi-provider API endpoint
-        const response = await fetch('/api/generate-metadata', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: controller.signal,
-          body: JSON.stringify({
-            provider: creds.provider,
-            apiKey: creds.apiKey,
-            model: creds.model,
-            baseUrl: creds.baseUrl,
-            base64Data,
-            mimeType: mimeTypeForAi,
-            filename: file.name,
-            keywordCount: aiConfig.keywordCount || 40,
-            customPromptHint: aiConfig.customInstructions || '',
-          }),
-        });
+        // 2. Call multi-provider API endpoint (server or direct client fallback)
+        let meta: any = null;
+        let providerUsed = creds.provider;
+        let modelUsed = creds.model;
+        let adobeCat = 1;
+        let cat1 = 'Backgrounds/Textures';
+        let cat2 = 'Abstract';
 
-        const responseText = await response.text();
-        let resData: any = {};
         try {
-          resData = JSON.parse(responseText);
-        } catch (parseErr) {
-          throw new Error(`Server returned non-JSON error (${response.status}).`);
+          const response = await fetch('/api/generate-metadata', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+            body: JSON.stringify({
+              provider: creds.provider,
+              apiKey: creds.apiKey,
+              model: creds.model,
+              baseUrl: creds.baseUrl,
+              base64Data,
+              mimeType: mimeTypeForAi,
+              filename: file.name,
+              keywordCount: aiConfig.keywordCount || 40,
+              customPromptHint: aiConfig.customInstructions || '',
+            }),
+          });
+
+          const responseText = await response.text();
+          let resData: any = {};
+          try {
+            resData = JSON.parse(responseText);
+          } catch {
+            // Not JSON (e.g. 404 HTML edge response)
+          }
+
+          if (response.ok && resData.success) {
+            meta = resData.metadata;
+            providerUsed = resData.providerUsed || creds.provider;
+            modelUsed = resData.modelUsed || creds.model;
+            adobeCat = mapToAdobeCategory(
+              meta.category_guess,
+              meta.title + ' ' + (meta.keywords || []).join(' ')
+            );
+            const mapped = mapToShutterstockCategory(
+              meta.category_guess,
+              meta.title + ' ' + (meta.keywords || []).join(' ')
+            );
+            cat1 = mapped.cat1;
+            cat2 = mapped.cat2;
+          } else if (resData?.error) {
+            throw new Error(resData.error);
+          }
+        } catch (serverErr: any) {
+          if (serverErr.name === 'AbortError') {
+            throw serverErr;
+          }
+
+          // If server failed (e.g. 404 or backend unavailable) and we have Gemini key or direct capable provider
+          if (creds.apiKey?.trim() && (creds.provider === 'gemini' || !creds.provider)) {
+            const directResult = await generateGeminiMetadataDirectly({
+              apiKey: creds.apiKey.trim(),
+              model: creds.model || 'gemini-3.7-flash',
+              base64Data,
+              mimeType: mimeTypeForAi,
+              filename: file.name,
+              keywordCount: aiConfig.keywordCount || 40,
+              customPromptHint: aiConfig.customInstructions || '',
+            });
+
+            meta = {
+              title: directResult.title,
+              description: directResult.description,
+              keywords: directResult.keywords,
+              category_guess: directResult.category_guess,
+            };
+            adobeCat = directResult.adobeCategory;
+            cat1 = directResult.shutterstockCategory1;
+            cat2 = directResult.shutterstockCategory2;
+            providerUsed = directResult.providerUsed;
+            modelUsed = directResult.modelUsed;
+          } else {
+            throw new Error(parseApiErrorMessage(creds.provider, serverErr));
+          }
         }
 
-        if (!response.ok || !resData.success) {
-          throw new Error(resData.error || `Server responded with status ${response.status}`);
+        if (!meta) {
+          throw new Error('Failed to generate metadata from AI provider.');
         }
-
-        const meta = resData.metadata;
-        const adobeCat = mapToAdobeCategory(
-          meta.category_guess,
-          meta.title + ' ' + (meta.keywords || []).join(' ')
-        );
-        const { cat1, cat2 } = mapToShutterstockCategory(
-          meta.category_guess,
-          meta.title + ' ' + (meta.keywords || []).join(' ')
-        );
 
         // 3. Update file with generated AI metadata
         setFiles((prev) =>
@@ -191,8 +240,8 @@ export default function App() {
                   adobeCategory: adobeCat,
                   shutterstockCategory1: cat1,
                   shutterstockCategory2: cat2,
-                  providerUsed: resData.providerUsed || creds.provider,
-                  modelUsed: resData.modelUsed || creds.model,
+                  providerUsed,
+                  modelUsed,
                   errorMessage: undefined,
                 }
               : f

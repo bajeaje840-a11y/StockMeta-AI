@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { AiConfig, AiProvider } from '../types';
 import { AI_PROVIDERS, isProviderReady, saveAiConfig } from '../data/aiModels';
+import { testAiKeyDirectly, normalizeGeminiModel } from '../utils/directAiService';
 
 interface AiKeySettingsModalProps {
   isOpen: boolean;
@@ -39,7 +40,10 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
   onTriggerBatchAfterSave,
   promptReason,
 }) => {
-  const [formData, setFormData] = useState<AiConfig>(aiConfig);
+  const [formData, setFormData] = useState<AiConfig>(() => ({
+    ...aiConfig,
+    geminiModel: normalizeGeminiModel(aiConfig.geminiModel),
+  }));
   const [activeTab, setActiveTab] = useState<AiProvider>(aiConfig.activeProvider || 'gemini');
   const [showKeyMap, setShowKeyMap] = useState<Record<string, boolean>>({});
   const [testStatus, setTestStatus] = useState<{
@@ -52,7 +56,10 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
   // Sync state when modal opens
   useEffect(() => {
     if (isOpen) {
-      setFormData(aiConfig);
+      setFormData({
+        ...aiConfig,
+        geminiModel: normalizeGeminiModel(aiConfig.geminiModel),
+      });
       setActiveTab(aiConfig.activeProvider || 'gemini');
       setTestStatus({ loading: false });
     }
@@ -114,38 +121,70 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
     }
 
     try {
-      const res = await fetch('/api/test-key', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider: activeTab,
-          apiKey: keyToTest.trim(),
-          model: modelToTest,
-          baseUrl: baseUrlToTest,
-        }),
-      });
+      let data: any = null;
+      let usedServer = false;
 
-      const responseText = await res.text();
-      let data: any = {};
       try {
-        data = JSON.parse(responseText);
-      } catch (parseErr) {
-        throw new Error(`Server returned non-JSON response (${res.status}): ${responseText.substring(0, 150)}`);
+        const res = await fetch('/api/test-key', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            provider: activeTab,
+            apiKey: keyToTest.trim(),
+            model: modelToTest,
+            baseUrl: baseUrlToTest,
+          }),
+        });
+
+        const responseText = await res.text();
+        if (res.ok) {
+          data = JSON.parse(responseText);
+          usedServer = true;
+        } else if (res.status === 400 || res.status === 401 || res.status === 403 || res.status === 429) {
+          try {
+            data = JSON.parse(responseText);
+            usedServer = true;
+          } catch {
+            // fallback to direct client test
+          }
+        }
+      } catch {
+        // Server fetch failed, will fallback to direct client test below
       }
 
-      if (res.ok && data.success) {
-        setTestStatus({
-          loading: false,
-          success: true,
-          message: data.message || 'API connection verified successfully!',
-        });
-      } else {
-        setTestStatus({
-          loading: false,
-          success: false,
-          error: data.error || 'Failed to connect. Please check your API key.',
-        });
+      // If server responded with structured result, use it
+      if (usedServer && data) {
+        if (data.success) {
+          setTestStatus({
+            loading: false,
+            success: true,
+            message: data.message || 'API connection verified successfully!',
+          });
+          return;
+        } else {
+          setTestStatus({
+            loading: false,
+            success: false,
+            error: data.error || 'Failed to connect. Please check your API key.',
+          });
+          return;
+        }
       }
+
+      // Client-side direct connection test fallback (handles 404/static host/proxy restart gracefully)
+      const directResult = await testAiKeyDirectly(
+        activeTab,
+        keyToTest.trim(),
+        modelToTest,
+        baseUrlToTest
+      );
+
+      setTestStatus({
+        loading: false,
+        success: directResult.success,
+        message: directResult.message,
+        error: directResult.error,
+      });
     } catch (err: any) {
       setTestStatus({
         loading: false,

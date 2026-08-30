@@ -28,36 +28,36 @@ export const AI_PROVIDERS: Record<AiProvider, ProviderMeta> = {
     keyPlaceholder: 'AQ... or AIzaSy...',
     keyHelpUrl: 'https://aistudio.google.com/app/apikey',
     keyFormatHint: 'API key starting with "AQ." or "AIzaSy..." from Google AI Studio',
-    defaultModel: 'gemini-2.5-flash',
+    defaultModel: 'gemini-3.7-flash',
     requiresApiKey: false, // Can fall back to server rotation pool
     models: [
       {
-        id: 'gemini-2.5-flash',
-        name: 'Gemini 2.5 Flash',
+        id: 'gemini-3.7-flash',
+        name: 'Gemini 3.7 Flash',
         provider: 'gemini',
-        description: 'Ultra-fast, high-precision stock vision & keyword ranking',
+        description: 'Ultra-fast multimodal stock vision & keyword ranking (Recommended)',
         isVisionCapable: true,
         recommended: true,
       },
       {
-        id: 'gemini-2.5-pro',
-        name: 'Gemini 2.5 Pro',
+        id: 'gemini-flash-latest',
+        name: 'Gemini Flash Latest',
+        provider: 'gemini',
+        description: 'Latest high-speed Gemini Flash model',
+        isVisionCapable: true,
+      },
+      {
+        id: 'gemini-3.1-pro-preview',
+        name: 'Gemini 3.1 Pro Preview',
         provider: 'gemini',
         description: 'Advanced reasoning for complex commercial subjects & deep tagging',
         isVisionCapable: true,
       },
       {
-        id: 'gemini-1.5-flash',
-        name: 'Gemini 1.5 Flash',
+        id: 'gemini-3.1-flash-lite',
+        name: 'Gemini 3.1 Flash Lite',
         provider: 'gemini',
-        description: 'Reliable, lightweight multimodal model for high volume batches',
-        isVisionCapable: true,
-      },
-      {
-        id: 'gemini-1.5-pro',
-        name: 'Gemini 1.5 Pro',
-        provider: 'gemini',
-        description: 'High context window vision analysis',
+        description: 'High-throughput lightweight vision indexing',
         isVisionCapable: true,
       },
     ],
@@ -205,7 +205,7 @@ export const AI_PROVIDERS: Record<AiProvider, ProviderMeta> = {
 export const DEFAULT_AI_CONFIG: AiConfig = {
   activeProvider: 'gemini',
   geminiKey: '',
-  geminiModel: 'gemini-2.5-flash',
+  geminiModel: 'gemini-3.7-flash',
   openaiKey: '',
   openaiModel: 'gpt-4o-mini',
   openaiBaseUrl: '',
@@ -228,7 +228,21 @@ export function loadAiConfig(): AiConfig {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_AI_CONFIG;
     const parsed = JSON.parse(raw);
-    return { ...DEFAULT_AI_CONFIG, ...parsed };
+    const config: AiConfig = { ...DEFAULT_AI_CONFIG, ...parsed };
+
+    // Auto-migrate legacy/deprecated Gemini models
+    if (
+      !config.geminiModel ||
+      config.geminiModel === 'gemini-2.5-flash' ||
+      config.geminiModel === 'gemini-2.5-pro' ||
+      config.geminiModel === 'gemini-1.5-flash' ||
+      config.geminiModel === 'gemini-1.5-pro' ||
+      config.geminiModel === 'gemini-2.0-flash'
+    ) {
+      config.geminiModel = 'gemini-3.7-flash';
+    }
+
+    return config;
   } catch (e) {
     return DEFAULT_AI_CONFIG;
   }

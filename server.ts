@@ -162,6 +162,30 @@ app.get('/api/key-status', (req, res) => {
   }
 });
 
+function normalizeGeminiModel(model?: string): string {
+  if (!model) return 'gemini-3.7-flash';
+  const m = model.toLowerCase().trim();
+  if (
+    m === 'gemini-2.5-flash' ||
+    m === 'gemini-1.5-flash' ||
+    m === 'gemini-2.0-flash' ||
+    m === 'gemini-flash' ||
+    m === 'flash'
+  ) {
+    return 'gemini-3.7-flash';
+  }
+  if (
+    m === 'gemini-2.5-pro' ||
+    m === 'gemini-1.5-pro' ||
+    m === 'gemini-2.0-pro' ||
+    m === 'gemini-pro' ||
+    m === 'pro'
+  ) {
+    return 'gemini-3.1-pro-preview';
+  }
+  return model;
+}
+
 /**
  * Format provider-specific error message cleanly for the user
  */
@@ -170,7 +194,7 @@ function formatProviderErrorMessage(provider: string, err: any): string {
   const lower = msg.toLowerCase();
 
   if (provider === 'gemini') {
-    if (lower.includes('api_key_invalid') || lower.includes('invalid api key') || lower.includes('api key not valid')) {
+    if (lower.includes('api_key_invalid') || lower.includes('invalid api key') || lower.includes('api key not valid') || lower.includes('api_key')) {
       return 'Invalid Gemini API Key. Please verify your key in Google AI Studio (https://aistudio.google.com/app/apikey).';
     }
     if (lower.includes('429') || lower.includes('quota') || lower.includes('resource_exhausted')) {
@@ -179,8 +203,8 @@ function formatProviderErrorMessage(provider: string, err: any): string {
     if (lower.includes('permission_denied') || lower.includes('403')) {
       return 'Permission denied for this Gemini API key. Ensure the Generative Language API is enabled.';
     }
-    if (lower.includes('model_not_found') || lower.includes('404')) {
-      return 'Selected Gemini model not supported or not found. Please choose Gemini 2.5 Flash.';
+    if (lower.includes('model_not_found') || (lower.includes('404') && lower.includes('models/'))) {
+      return 'Selected Gemini model not found. Switching to Gemini 3.7 Flash.';
     }
   } else if (provider === 'openai') {
     if (lower.includes('401') || lower.includes('invalid_api_key')) {
@@ -229,7 +253,7 @@ app.post('/api/test-key', async (req, res) => {
 
     if (provider === 'gemini') {
       const { client: ai } = getGenAIClient(apiKey || undefined);
-      const testModel = model || 'gemini-2.5-flash';
+      const testModel = normalizeGeminiModel(model);
       const response = await ai.models.generateContent({
         model: testModel,
         contents: 'Respond with standard text: OK',
@@ -394,7 +418,7 @@ Generate stock SEO metadata as JSON.`;
     // 1. GOOGLE GEMINI PROVIDER
     // ==========================================
     if (provider === 'gemini') {
-      const selectedModel = model || 'gemini-2.5-flash';
+      const selectedModel = normalizeGeminiModel(model);
       const keyPool = getApiKeyPool();
       const hasCustomKey = !!apiKey?.trim();
       const totalKeys = hasCustomKey ? 1 : Math.max(keyPool.length, 1);
