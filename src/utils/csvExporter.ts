@@ -88,10 +88,9 @@ export function formatFileForPlatform(
   switch (platformId) {
     case 'adobe_stock': {
       const adobeCat = file.adobeCategory || mapToAdobeCategory(file.category_guess, file.title + ' ' + file.keywords.join(' '));
-      const cleanTitle = sanitizeTitle(file.title, true, 70); // Adobe prohibits commas and max 70 chars
-      const cleanFilename = sanitizeFilename(filename, 30);
+      const cleanTitle = sanitizeTitle(file.title, true, 200); // Adobe prohibits commas and max 200 chars in contributor UI
       return {
-        Filename: cleanFilename,
+        Filename: filename,
         Title: cleanTitle,
         Keywords: keywordsString,
         Category: adobeCat.toString(),
@@ -209,7 +208,8 @@ export function generateCSV(
  * Triggers instant browser download of CSV string
  */
 export function downloadCSV(csvContent: string, filename: string): void {
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  // Use UTF-8 BOM (\ufeff) to guarantee proper character encoding in Adobe Stock and Excel
+  const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.setAttribute('href', url);
@@ -235,7 +235,7 @@ export async function downloadAllPlatformsZip(
   for (const platformId of platformKeys) {
     const config = PLATFORM_CONFIGS[platformId];
     const csvStr = generateCSV(files, platformId, settings);
-    zip.file(`${config.name.toLowerCase().replace(/\s+/g, '_')}_metadata_${dateStr}.csv`, csvStr);
+    zip.file(`${config.name.toLowerCase().replace(/\s+/g, '_')}_metadata_${dateStr}.csv`, '\ufeff' + csvStr);
   }
 
   const zipBlob = await zip.generateAsync({ type: 'blob' });
