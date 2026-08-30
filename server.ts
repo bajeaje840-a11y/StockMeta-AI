@@ -196,25 +196,23 @@ app.get('/api/key-status', (req, res) => {
 });
 
 function normalizeGeminiModel(model?: string): string {
-  if (!model) return 'gemini-3.7-flash';
+  if (!model) return 'gemini-2.5-flash';
   const m = model.toLowerCase().trim();
   if (
-    m === 'gemini-2.5-flash' ||
-    m === 'gemini-1.5-flash' ||
-    m === 'gemini-2.0-flash' ||
     m === 'gemini-flash' ||
-    m === 'flash'
+    m === 'flash' ||
+    m === 'gemini-flash-latest' ||
+    m === 'gemini-3.7-flash' ||
+    m === 'gemini-3.1-flash-lite'
   ) {
-    return 'gemini-3.7-flash';
+    return 'gemini-2.5-flash';
   }
   if (
-    m === 'gemini-2.5-pro' ||
-    m === 'gemini-1.5-pro' ||
-    m === 'gemini-2.0-pro' ||
     m === 'gemini-pro' ||
-    m === 'pro'
+    m === 'pro' ||
+    m === 'gemini-3.1-pro-preview'
   ) {
-    return 'gemini-3.1-pro-preview';
+    return 'gemini-2.5-pro';
   }
   return model;
 }
@@ -295,14 +293,6 @@ app.post('/api/test-key', async (req, res) => {
     }
 
     if (provider === 'gemini') {
-      // If user entered a key that clearly looks invalid (e.g. starts with AQ. instead of AIzaSy)
-      if (apiKey && apiKey.startsWith('AQ.')) {
-        return res.status(400).json({
-          success: false,
-          error: 'This key starts with "AQ." which is not a valid Gemini API key. Google AI Studio keys start with "AIzaSy...". Please copy your key from https://aistudio.google.com/app/apikey or click "Use Built-in Free AI".',
-        });
-      }
-
       let ai: GoogleGenAI;
       let usingServerPool = false;
       try {
@@ -317,7 +307,13 @@ app.post('/api/test-key', async (req, res) => {
       }
 
       const testModel = normalizeGeminiModel(model);
-      const candidateModels = Array.from(new Set([testModel, 'gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.1-flash-lite']));
+      const candidateModels = Array.from(new Set([
+        testModel,
+        'gemini-2.5-flash',
+        'gemini-2.0-flash',
+        'gemini-1.5-flash',
+        'gemini-2.5-pro',
+      ]));
       
       let lastErr: any = null;
       for (const curModel of candidateModels) {
@@ -330,7 +326,7 @@ app.post('/api/test-key', async (req, res) => {
             success: true,
             message: usingServerPool
               ? `Connected to Built-in Server Gemini AI (${curModel}) successfully!`
-              : `Connected to your custom Gemini API (${curModel}) successfully!`,
+              : `Connected to your Google Gemini API (${curModel}) successfully!`,
             modelUsed: curModel,
             reply: response.text?.trim() || 'OK',
           });
@@ -528,7 +524,13 @@ Generate premium microstock SEO metadata as valid JSON.`;
     // ==========================================
     if (provider === 'gemini') {
       const selectedModel = normalizeGeminiModel(model);
-      const candidateModels = Array.from(new Set([selectedModel, 'gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.1-flash-lite']));
+      const candidateModels = Array.from(new Set([
+        selectedModel,
+        'gemini-2.5-flash',
+        'gemini-2.0-flash',
+        'gemini-1.5-flash',
+        'gemini-2.5-pro',
+      ]));
       const keyPool = getApiKeyPool();
       const hasCustomKey = !!apiKey?.trim();
       const totalKeys = hasCustomKey ? 1 : Math.max(keyPool.length, 1);
