@@ -56,11 +56,6 @@ function getGenAIClient(customKey?: string): { client: GoogleGenAI; keySnippet: 
 
   const client = new GoogleGenAI({
     apiKey: key,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
   });
 
   return { client, keySnippet };
@@ -168,13 +163,63 @@ app.get('/api/key-status', (req, res) => {
 });
 
 /**
+ * Format provider-specific error message cleanly for the user
+ */
+function formatProviderErrorMessage(provider: string, err: any): string {
+  const msg = (err?.message || String(err || '')).trim();
+  const lower = msg.toLowerCase();
+
+  if (provider === 'gemini') {
+    if (lower.includes('api_key_invalid') || lower.includes('invalid api key') || lower.includes('api key not valid')) {
+      return 'Invalid Gemini API Key. Please verify your key in Google AI Studio (https://aistudio.google.com/app/apikey).';
+    }
+    if (lower.includes('429') || lower.includes('quota') || lower.includes('resource_exhausted')) {
+      return 'Gemini API Rate limit reached (429). Please wait a few moments or use a paid/different API key.';
+    }
+    if (lower.includes('permission_denied') || lower.includes('403')) {
+      return 'Permission denied for this Gemini API key. Ensure the Generative Language API is enabled.';
+    }
+    if (lower.includes('model_not_found') || lower.includes('404')) {
+      return 'Selected Gemini model not supported or not found. Please choose Gemini 2.5 Flash.';
+    }
+  } else if (provider === 'openai') {
+    if (lower.includes('401') || lower.includes('invalid_api_key')) {
+      return 'Invalid OpenAI API Key. OpenAI keys usually start with "sk-...". Check your OpenAI platform settings.';
+    }
+    if (lower.includes('429') || lower.includes('insufficient_quota')) {
+      return 'OpenAI quota exceeded or rate limit reached. Please check your OpenAI billing balance.';
+    }
+  } else if (provider === 'claude') {
+    if (lower.includes('401') || lower.includes('authentication_error')) {
+      return 'Invalid Anthropic Claude API Key. Claude keys usually start with "sk-ant-...".';
+    }
+    if (lower.includes('429') || lower.includes('rate_limit_error')) {
+      return 'Claude API Rate limit exceeded. Please wait a minute before retrying.';
+    }
+  } else if (provider === 'deepseek') {
+    if (lower.includes('401') || lower.includes('authentication_error')) {
+      return 'Invalid DeepSeek API Key. Please verify your key on the DeepSeek platform.';
+    }
+    if (lower.includes('402') || lower.includes('insufficient_balance')) {
+      return 'DeepSeek balance is insufficient. Please top up your DeepSeek balance.';
+    }
+  }
+
+  return msg || `Failed to connect to ${provider.toUpperCase()}`;
+}
+
+/**
  * API Route: /api/test-key
  * Test API key connectivity for Gemini, OpenAI, Claude, DeepSeek, or Custom AI
  */
 app.post('/api/test-key', async (req, res) => {
-  try {
-    const { provider = 'gemini', apiKey, model, baseUrl } = req.body;
+  res.setHeader('Content-Type', 'application/json');
+  const provider = (req.body.provider || 'gemini').toLowerCase().trim();
+  const apiKey = typeof req.body.apiKey === 'string' ? req.body.apiKey.trim() : '';
+  const model = req.body.model;
+  const baseUrl = req.body.baseUrl;
 
+  try {
     if (!apiKey && provider !== 'gemini') {
       return res.status(400).json({
         success: false,
@@ -183,7 +228,7 @@ app.post('/api/test-key', async (req, res) => {
     }
 
     if (provider === 'gemini') {
-      const { client: ai } = getGenAIClient(apiKey);
+      const { client: ai } = getGenAIClient(apiKey || undefined);
       const testModel = model || 'gemini-2.5-flash';
       const response = await ai.models.generateContent({
         model: testModel,
@@ -284,9 +329,11 @@ app.post('/api/test-key', async (req, res) => {
 
     return res.status(400).json({ success: false, error: `Unsupported provider: ${provider}` });
   } catch (err: any) {
-    return res.status(500).json({
+    console.error(`Error testing API key for ${provider}:`, err);
+    const friendlyError = formatProviderErrorMessage(provider, err);
+    return res.status(400).json({
       success: false,
-      error: err?.message || 'Failed to connect to AI provider.',
+      error: friendlyError,
     });
   }
 });
@@ -633,9 +680,10 @@ Generate stock SEO metadata as JSON.`;
     });
   } catch (err: any) {
     console.error('Error generating metadata:', err);
+    const friendlyError = formatProviderErrorMessage(req.body?.provider || 'gemini', err);
     return res.status(500).json({
       success: false,
-      error: err?.message || 'Failed to generate AI metadata for file.',
+      error: friendlyError || 'Failed to generate AI metadata for file.',
     });
   }
 });
@@ -643,6 +691,18 @@ Generate stock SEO metadata as JSON.`;
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', service: 'StockMeta AI Server' });
+});
+
+// Global Express JSON error handler
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (res.headersSent) {
+    return next(err);
+  }
+  console.error('Unhandled server error:', err);
+  res.status(err?.status || 500).json({
+    success: false,
+    error: err?.message || 'An unexpected internal server error occurred.',
+  });
 });
 
 async function startServer() {

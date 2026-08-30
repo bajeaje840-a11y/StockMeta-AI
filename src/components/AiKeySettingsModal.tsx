@@ -94,17 +94,17 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
     let baseUrlToTest = '';
 
     if (activeTab === 'gemini') {
-      keyToTest = formData.geminiKey;
+      keyToTest = formData.geminiKey || '';
       modelToTest = formData.geminiModel;
     } else if (activeTab === 'openai') {
-      keyToTest = formData.openaiKey;
+      keyToTest = formData.openaiKey || '';
       modelToTest = formData.openaiModel;
       baseUrlToTest = formData.openaiBaseUrl || '';
     } else if (activeTab === 'claude') {
-      keyToTest = formData.claudeKey;
+      keyToTest = formData.claudeKey || '';
       modelToTest = formData.claudeModel;
     } else if (activeTab === 'deepseek') {
-      keyToTest = formData.deepseekKey;
+      keyToTest = formData.deepseekKey || '';
       modelToTest = formData.deepseekModel;
       baseUrlToTest = formData.deepseekBaseUrl || '';
     } else if (activeTab === 'custom') {
@@ -119,13 +119,20 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           provider: activeTab,
-          apiKey: keyToTest,
+          apiKey: keyToTest.trim(),
           model: modelToTest,
           baseUrl: baseUrlToTest,
         }),
       });
 
-      const data = await res.json();
+      const responseText = await res.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(responseText);
+      } catch (parseErr) {
+        throw new Error(`Server returned non-JSON response (${res.status}): ${responseText.substring(0, 150)}`);
+      }
+
       if (res.ok && data.success) {
         setTestStatus({
           loading: false,
@@ -146,6 +153,76 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
         error: err.message || 'Network error while testing connection.',
       });
     }
+  };
+
+  const getActiveKeyValue = () => {
+    switch (activeTab) {
+      case 'gemini':
+        return formData.geminiKey || '';
+      case 'openai':
+        return formData.openaiKey || '';
+      case 'claude':
+        return formData.claudeKey || '';
+      case 'deepseek':
+        return formData.deepseekKey || '';
+      case 'custom':
+        return formData.customKey || '';
+      default:
+        return '';
+    }
+  };
+
+  const getFormatTip = () => {
+    const val = getActiveKeyValue().trim();
+    if (!val) return null;
+
+    if (activeTab === 'gemini') {
+      if (val.startsWith('sk-ant-')) {
+        return {
+          type: 'warning',
+          text: 'This looks like an Anthropic Claude API key (starts with "sk-ant-"). Click the "Claude AI" tab above to use it.',
+        };
+      }
+      if (val.startsWith('sk-')) {
+        return {
+          type: 'warning',
+          text: 'This looks like an OpenAI/DeepSeek key (starts with "sk-"). Click "ChatGPT / OpenAI" or "DeepSeek" tab above.',
+        };
+      }
+      if (!val.startsWith('AIza') && !val.startsWith('AQ.') && !val.startsWith('AQ') && val.length > 5) {
+        return {
+          type: 'warning',
+          text: 'Notice: Google Gemini API keys from Google AI Studio usually start with "AQ." or "AIzaSy...". Please verify your key.',
+        };
+      }
+    } else if (activeTab === 'openai') {
+      if (val.startsWith('AIza') || val.startsWith('AQ.')) {
+        return {
+          type: 'warning',
+          text: 'This looks like a Google Gemini key. Click the "Gemini" tab above.',
+        };
+      }
+      if (!val.startsWith('sk-') && val.length > 4) {
+        return {
+          type: 'warning',
+          text: 'Notice: OpenAI API keys usually start with "sk-...".',
+        };
+      }
+    } else if (activeTab === 'claude') {
+      if (val.startsWith('AIza') || val.startsWith('AQ.')) {
+        return {
+          type: 'warning',
+          text: 'This looks like a Google Gemini key. Click the "Gemini" tab above.',
+        };
+      }
+      if (!val.startsWith('sk-ant-') && val.length > 5) {
+        return {
+          type: 'warning',
+          text: 'Notice: Anthropic Claude API keys usually start with "sk-ant-...".',
+        };
+      }
+    }
+    return null;
   };
 
   const handleSaveAndApply = (startBatchAfter = false) => {
@@ -320,6 +397,39 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
                   </button>
                 </div>
               </div>
+
+              {/* Format Hint / Warning */}
+              {getFormatTip() && (
+                <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-800 dark:text-amber-300 text-[11px] flex items-start space-x-2">
+                  <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-amber-500" />
+                  <span>{getFormatTip()?.text}</span>
+                </div>
+              )}
+
+              {/* Quick Gemini Guidance Card */}
+              {activeTab === 'gemini' && (
+                <div className="p-3 rounded-lg bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/50 text-[11px] text-gray-600 dark:text-gray-400 space-y-1">
+                  <div className="font-semibold text-indigo-900 dark:text-indigo-300 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+                    <span>How to get a Free Google Gemini API Key:</span>
+                  </div>
+                  <ol className="list-decimal list-inside space-y-0.5 text-gray-700 dark:text-gray-300 pl-1">
+                    <li>
+                      Visit{' '}
+                      <a
+                        href="https://aistudio.google.com/app/apikey"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-indigo-600 dark:text-indigo-400 font-semibold underline"
+                      >
+                        Google AI Studio API Keys
+                      </a>
+                    </li>
+                    <li>Click <strong>&quot;Create API Key&quot;</strong> in your project.</li>
+                    <li>Copy your key (starts with <code className="bg-indigo-100 dark:bg-indigo-900/60 px-1 py-0.5 rounded font-mono text-indigo-700 dark:text-indigo-300">AQ.</code> or <code className="bg-indigo-100 dark:bg-indigo-900/60 px-1 py-0.5 rounded font-mono text-indigo-700 dark:text-indigo-300">AIzaSy...</code>) and paste it above.</li>
+                  </ol>
+                </div>
+              )}
             </div>
 
             {/* Model Selection Dropdown */}
@@ -392,37 +502,45 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
             )}
 
             {/* Test Connection Button & Status */}
-            <div className="pt-2 flex flex-wrap items-center justify-between gap-3">
-              <button
-                type="button"
-                onClick={handleTestConnection}
-                disabled={testStatus.loading}
-                className="inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 transition"
-              >
-                {testStatus.loading ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-500" />
-                    <span>Testing Connection...</span>
-                  </>
-                ) : (
-                  <>
-                    <ShieldCheck className="w-3.5 h-3.5 text-indigo-500" />
-                    <span>Test {currentProviderMeta.shortName} Connection</span>
-                  </>
-                )}
-              </button>
+            <div className="pt-2 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={handleTestConnection}
+                  disabled={testStatus.loading}
+                  className="inline-flex items-center space-x-1.5 px-3.5 py-2 text-xs font-semibold rounded-xl bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 transition shadow-sm"
+                >
+                  {testStatus.loading ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-500" />
+                      <span>Testing Connection...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck className="w-3.5 h-3.5 text-indigo-500" />
+                      <span>Test {currentProviderMeta.shortName} Connection</span>
+                    </>
+                  )}
+                </button>
+              </div>
 
               {testStatus.success && (
-                <div className="flex items-center space-x-1 text-xs text-emerald-600 dark:text-emerald-400 font-medium">
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>{testStatus.message}</span>
+                <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-start space-x-2.5 text-xs text-emerald-700 dark:text-emerald-300">
+                  <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5 text-emerald-500" />
+                  <div>
+                    <span className="font-bold">Connection Successful! </span>
+                    <span>{testStatus.message}</span>
+                  </div>
                 </div>
               )}
 
               {testStatus.error && (
-                <div className="flex items-center space-x-1 text-xs text-rose-600 dark:text-rose-400 font-medium max-w-sm truncate">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                  <span title={testStatus.error}>{testStatus.error}</span>
+                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-start space-x-2.5 text-xs text-rose-700 dark:text-rose-300">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5 text-rose-500" />
+                  <div>
+                    <span className="font-bold">Connection Failed: </span>
+                    <span>{testStatus.error}</span>
+                  </div>
                 </div>
               )}
             </div>
