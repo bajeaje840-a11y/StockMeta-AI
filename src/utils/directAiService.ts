@@ -157,17 +157,17 @@ export function parseApiErrorMessage(provider: string, err: any, rawResponseText
   const lower = msg.toLowerCase();
 
   if (provider === 'gemini') {
+    if (lower.includes('api_key_invalid') || lower.includes('invalid api key') || lower.includes('api key not valid') || lower.includes('api_key') || lower.includes('400') || lower.includes('bad request')) {
+      return 'Invalid Gemini API Key. Google Gemini keys from Google AI Studio start with "AIzaSy...". Please verify your key at https://aistudio.google.com/app/apikey or click "Use Free Built-in AI".';
+    }
     if (lower.includes('503') || lower.includes('high demand') || lower.includes('unavailable')) {
       return 'Google Gemini model is temporarily busy (503). Retrying automatically with backup model...';
-    }
-    if (lower.includes('api_key_invalid') || lower.includes('invalid api key') || lower.includes('api key not valid') || lower.includes('api_key')) {
-      return 'Invalid Gemini API Key. Please verify your key in Google AI Studio (https://aistudio.google.com/app/apikey).';
     }
     if (lower.includes('429') || lower.includes('quota') || lower.includes('resource_exhausted')) {
       return 'Gemini API Rate limit or quota reached (429). Please wait a few moments or use a paid/different API key.';
     }
     if (lower.includes('permission_denied') || lower.includes('403')) {
-      return 'Permission denied for this Gemini API key. Ensure the Generative Language API is enabled in your Google Cloud / AI Studio project.';
+      return 'Permission denied for this Gemini API key. Ensure Generative Language API is enabled or use free built-in AI.';
     }
     if (lower.includes('model_not_found') || (lower.includes('404') && lower.includes('models/'))) {
       return 'Selected Gemini model not found. Switching to Gemini Flash.';

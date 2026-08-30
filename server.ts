@@ -223,12 +223,19 @@ function normalizeGeminiModel(model?: string): string {
  * Format provider-specific error message cleanly for the user
  */
 function formatProviderErrorMessage(provider: string, err: any): string {
-  const msg = (err?.message || String(err || '')).trim();
-  const lower = msg.toLowerCase();
+  const rawMsg = (err?.message || err?.error?.message || err?.toString?.() || String(err || '')).trim();
+  const lower = rawMsg.toLowerCase();
 
   if (provider === 'gemini') {
-    if (lower.includes('api_key_invalid') || lower.includes('invalid api key') || lower.includes('api key not valid') || lower.includes('api_key')) {
-      return 'Invalid Gemini API Key. Please verify your key in Google AI Studio (https://aistudio.google.com/app/apikey).';
+    if (
+      lower.includes('api_key_invalid') ||
+      lower.includes('invalid api key') ||
+      lower.includes('api key not valid') ||
+      lower.includes('api_key') ||
+      lower.includes('pass a valid api key') ||
+      lower.includes('400 bad request')
+    ) {
+      return 'Invalid Gemini API Key. Google Gemini keys from Google AI Studio start with "AIzaSy...". Please verify your key at https://aistudio.google.com/app/apikey or leave the key field empty to use the built-in free AI.';
     }
     if (lower.includes('503') || lower.includes('high demand') || lower.includes('unavailable')) {
       return 'Google Gemini model is temporarily experiencing high global demand (503). Retrying automatically...';
@@ -237,7 +244,7 @@ function formatProviderErrorMessage(provider: string, err: any): string {
       return 'Gemini API Rate limit reached (429). Please wait a few moments or use a paid/different API key.';
     }
     if (lower.includes('permission_denied') || lower.includes('403')) {
-      return 'Permission denied for this Gemini API key. Ensure the Generative Language API is enabled.';
+      return 'Permission denied for this Gemini API key. Ensure Generative Language API is enabled or leave empty for built-in AI.';
     }
     if (lower.includes('model_not_found') || (lower.includes('404') && lower.includes('models/'))) {
       return 'Selected Gemini model not found. Switching to Gemini Flash.';
@@ -265,7 +272,7 @@ function formatProviderErrorMessage(provider: string, err: any): string {
     }
   }
 
-  return msg || `Failed to connect to ${provider.toUpperCase()}`;
+  return rawMsg || `Failed to connect to ${provider.toUpperCase()}`;
 }
 
 /**
@@ -288,7 +295,27 @@ app.post('/api/test-key', async (req, res) => {
     }
 
     if (provider === 'gemini') {
-      const { client: ai } = getGenAIClient(apiKey || undefined);
+      // If user entered a key that clearly looks invalid (e.g. starts with AQ. instead of AIzaSy)
+      if (apiKey && apiKey.startsWith('AQ.')) {
+        return res.status(400).json({
+          success: false,
+          error: 'This key starts with "AQ." which is not a valid Gemini API key. Google AI Studio keys start with "AIzaSy...". Please copy your key from https://aistudio.google.com/app/apikey or click "Use Built-in Free AI".',
+        });
+      }
+
+      let ai: GoogleGenAI;
+      let usingServerPool = false;
+      try {
+        const clientInfo = getGenAIClient(apiKey || undefined);
+        ai = clientInfo.client;
+        usingServerPool = !apiKey;
+      } catch (err: any) {
+        return res.status(400).json({
+          success: false,
+          error: formatProviderErrorMessage('gemini', err),
+        });
+      }
+
       const testModel = normalizeGeminiModel(model);
       const candidateModels = Array.from(new Set([testModel, 'gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.1-flash-lite']));
       
@@ -297,18 +324,20 @@ app.post('/api/test-key', async (req, res) => {
         try {
           const response = await ai.models.generateContent({
             model: curModel,
-            contents: 'Respond with standard text: OK',
+            contents: 'Respond with: OK',
           });
           return res.json({
             success: true,
-            message: `Successfully connected to Google Gemini (${curModel})!`,
+            message: usingServerPool
+              ? `Connected to Built-in Server Gemini AI (${curModel}) successfully!`
+              : `Connected to your custom Gemini API (${curModel}) successfully!`,
             modelUsed: curModel,
             reply: response.text?.trim() || 'OK',
           });
         } catch (err: any) {
           lastErr = err;
+          console.error(`[Test Key Error] model: ${curModel}, err:`, err);
           const errStr = (err?.message || String(err)).toLowerCase();
-          // If error is 503, 404, or rate limit, try next model candidate
           if (
             errStr.includes('503') ||
             errStr.includes('unavailable') ||
@@ -320,7 +349,6 @@ app.post('/api/test-key', async (req, res) => {
           ) {
             continue;
           }
-          // If invalid key or permission denied, break immediately
           break;
         }
       }
@@ -573,8 +601,41 @@ Generate premium microstock SEO metadata as valid JSON.`;
               break; // break to next model in candidateModels
             }
 
-            if (hasCustomKey && (errStr.includes('invalid') || errStr.includes('permission_denied') || errStr.includes('403'))) {
-              throw new Error(formatProviderErrorMessage('gemini', err));
+            if (hasCustomKey && (errStr.includes('invalid') || errStr.includes('permission_denied') || errStr.includes('403') || errStr.includes('400 bad request'))) {
+              console.warn('[Gemini AI] Custom API key failed with auth error. Trying seamless server built-in key fallback...');
+              try {
+                const { client: fallbackAi } = getGenAIClient();
+                const fallbackResponse = await fallbackAi.models.generateContent({
+                  model: curModel,
+                  contents: {
+                    parts: [
+                      {
+                        inlineData: {
+                          mimeType: safeMimeType,
+                          data: base64Data,
+                        },
+                      },
+                      {
+                        text: promptText,
+                      },
+                    ],
+                  },
+                  config: {
+                    systemInstruction,
+                    temperature: 0.2,
+                    responseMimeType: 'application/json',
+                  },
+                });
+
+                resultText = fallbackResponse.text || '';
+                if (resultText) {
+                  modelSuccess = true;
+                  break;
+                }
+              } catch (fallbackErr) {
+                console.warn('[Gemini AI] Fallback also failed:', fallbackErr);
+                throw new Error(formatProviderErrorMessage('gemini', err));
+              }
             }
           }
         }

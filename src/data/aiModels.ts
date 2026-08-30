@@ -25,9 +25,9 @@ export const AI_PROVIDERS: Record<AiProvider, ProviderMeta> = {
     badgeColor: 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/30',
     borderColor: 'border-indigo-500/40',
     logoIcon: 'Sparkles',
-    keyPlaceholder: 'AQ... or AIzaSy...',
+    keyPlaceholder: 'AIzaSy... (Leave empty for Free Built-in AI)',
     keyHelpUrl: 'https://aistudio.google.com/app/apikey',
-    keyFormatHint: 'API key starting with "AQ." or "AIzaSy..." from Google AI Studio',
+    keyFormatHint: 'Google AI Studio key (starts with "AIzaSy...") or leave empty',
     defaultModel: 'gemini-3.7-flash',
     requiresApiKey: false, // Can fall back to server rotation pool
     models: [

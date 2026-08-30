@@ -228,14 +228,20 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
           text: 'This looks like an OpenAI/DeepSeek key (starts with "sk-"). Click "ChatGPT / OpenAI" or "DeepSeek" tab above.',
         };
       }
-      if (!val.startsWith('AIza') && !val.startsWith('AQ.') && !val.startsWith('AQ') && val.length > 5) {
+      if (val.startsWith('AQ.')) {
         return {
           type: 'warning',
-          text: 'Notice: Google Gemini API keys from Google AI Studio usually start with "AQ." or "AIzaSy...". Please verify your key.',
+          text: 'Notice: This token starts with "AQ." which is not a valid Gemini API key. Google AI Studio keys start with "AIzaSy...". You can click "Use Free Built-in AI" or leave the field blank.',
+        };
+      }
+      if (!val.startsWith('AIza') && val.length > 5) {
+        return {
+          type: 'warning',
+          text: 'Notice: Google Gemini API keys from Google AI Studio start with "AIzaSy...". Please verify your key or leave blank for built-in AI.',
         };
       }
     } else if (activeTab === 'openai') {
-      if (val.startsWith('AIza') || val.startsWith('AQ.')) {
+      if (val.startsWith('AIza')) {
         return {
           type: 'warning',
           text: 'This looks like a Google Gemini key. Click the "Gemini" tab above.',
@@ -394,9 +400,27 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
                     </span>
                   )}
                 </label>
-                <span className="text-[10px] text-gray-400">
-                  {currentProviderMeta.keyFormatHint}
-                </span>
+                {activeTab === 'gemini' && formData.geminiKey && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFormData((p) => ({ ...p, geminiKey: '' }));
+                      setTestStatus({
+                        loading: false,
+                        success: true,
+                        message: 'Switched to Free Built-in Server Gemini AI. Click "Test Gemini Connection" or "Save Configuration".',
+                      });
+                    }}
+                    className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1"
+                  >
+                    <span>⚡ Use Free Built-in AI</span>
+                  </button>
+                )}
+                {activeTab !== 'gemini' && (
+                  <span className="text-[10px] text-gray-400">
+                    {currentProviderMeta.keyFormatHint}
+                  </span>
+                )}
               </div>
 
               <div className="relative flex items-center">
@@ -450,11 +474,14 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
                 <div className="p-3 rounded-lg bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/50 text-[11px] text-gray-600 dark:text-gray-400 space-y-1">
                   <div className="font-semibold text-indigo-900 dark:text-indigo-300 flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
-                    <span>How to get a Free Google Gemini API Key:</span>
+                    <span>How to use Google Gemini:</span>
                   </div>
-                  <ol className="list-decimal list-inside space-y-0.5 text-gray-700 dark:text-gray-300 pl-1">
+                  <ul className="space-y-1 text-gray-700 dark:text-gray-300 pl-1 list-disc list-inside">
                     <li>
-                      Visit{' '}
+                      <span className="font-semibold text-emerald-600 dark:text-emerald-400">Easiest option:</span> Leave the API Key field blank to automatically use the built-in free Server AI.
+                    </li>
+                    <li>
+                      Or get your personal key from{' '}
                       <a
                         href="https://aistudio.google.com/app/apikey"
                         target="_blank"
@@ -462,11 +489,10 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
                         className="text-indigo-600 dark:text-indigo-400 font-semibold underline"
                       >
                         Google AI Studio API Keys
-                      </a>
+                      </a>{' '}
+                      (starts with <code className="bg-indigo-100 dark:bg-indigo-900/60 px-1 py-0.5 rounded font-mono text-indigo-700 dark:text-indigo-300">AIzaSy...</code>) and paste it.
                     </li>
-                    <li>Click <strong>&quot;Create API Key&quot;</strong> in your project.</li>
-                    <li>Copy your key (starts with <code className="bg-indigo-100 dark:bg-indigo-900/60 px-1 py-0.5 rounded font-mono text-indigo-700 dark:text-indigo-300">AQ.</code> or <code className="bg-indigo-100 dark:bg-indigo-900/60 px-1 py-0.5 rounded font-mono text-indigo-700 dark:text-indigo-300">AIzaSy...</code>) and paste it above.</li>
-                  </ol>
+                  </ul>
                 </div>
               )}
             </div>
