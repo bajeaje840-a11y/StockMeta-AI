@@ -186,37 +186,41 @@ export default function App() {
             );
             cat1 = mapped.cat1;
             cat2 = mapped.cat2;
-          } else if (resData?.error) {
-            throw new Error(resData.error);
+          } else {
+            throw new Error(resData?.error || `Server request failed with status ${response.status}`);
           }
         } catch (serverErr: any) {
           if (serverErr.name === 'AbortError') {
             throw serverErr;
           }
 
-          // If server failed (e.g. 404 or backend unavailable) and we have Gemini key or direct capable provider
+          // If server failed (e.g. network/500/timeout) and we have Gemini key or direct capable provider
           if (creds.apiKey?.trim() && (creds.provider === 'gemini' || !creds.provider)) {
-            const directResult = await generateGeminiMetadataDirectly({
-              apiKey: creds.apiKey.trim(),
-              model: creds.model || 'gemini-3.7-flash',
-              base64Data,
-              mimeType: mimeTypeForAi,
-              filename: file.name,
-              keywordCount: aiConfig.keywordCount || 40,
-              customPromptHint: aiConfig.customInstructions || '',
-            });
+            try {
+              const directResult = await generateGeminiMetadataDirectly({
+                apiKey: creds.apiKey.trim(),
+                model: creds.model || 'gemini-3.7-flash',
+                base64Data,
+                mimeType: mimeTypeForAi,
+                filename: file.name,
+                keywordCount: aiConfig.keywordCount || 40,
+                customPromptHint: aiConfig.customInstructions || '',
+              });
 
-            meta = {
-              title: directResult.title,
-              description: directResult.description,
-              keywords: directResult.keywords,
-              category_guess: directResult.category_guess,
-            };
-            adobeCat = directResult.adobeCategory;
-            cat1 = directResult.shutterstockCategory1;
-            cat2 = directResult.shutterstockCategory2;
-            providerUsed = directResult.providerUsed;
-            modelUsed = directResult.modelUsed;
+              meta = {
+                title: directResult.title,
+                description: directResult.description,
+                keywords: directResult.keywords,
+                category_guess: directResult.category_guess,
+              };
+              adobeCat = directResult.adobeCategory;
+              cat1 = directResult.shutterstockCategory1;
+              cat2 = directResult.shutterstockCategory2;
+              providerUsed = directResult.providerUsed;
+              modelUsed = directResult.modelUsed;
+            } catch (directErr: any) {
+              throw new Error(parseApiErrorMessage(creds.provider, directErr || serverErr));
+            }
           } else {
             throw new Error(parseApiErrorMessage(creds.provider, serverErr));
           }

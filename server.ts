@@ -56,6 +56,11 @@ function getGenAIClient(customKey?: string): { client: GoogleGenAI; keySnippet: 
 
   const client = new GoogleGenAI({
     apiKey: key,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      },
+    },
   });
 
   return { client, keySnippet };
@@ -478,33 +483,23 @@ Generate stock SEO metadata as JSON.`;
 
             const response = await ai.models.generateContent({
               model: curModel,
-              contents: [
-                {
-                  inlineData: {
-                    mimeType: safeMimeType,
-                    data: base64Data,
+              contents: {
+                parts: [
+                  {
+                    inlineData: {
+                      mimeType: safeMimeType,
+                      data: base64Data,
+                    },
                   },
-                },
-                promptText,
-              ],
+                  {
+                    text: promptText,
+                  },
+                ],
+              },
               config: {
                 systemInstruction,
                 temperature: 0.2,
                 responseMimeType: 'application/json',
-                responseSchema: {
-                  type: Type.OBJECT,
-                  properties: {
-                    title: { type: Type.STRING, description: 'Stock title max 70 chars, no commas' },
-                    description: { type: Type.STRING, description: '1-2 sentence detailed visual description' },
-                    keywords: {
-                      type: Type.ARRAY,
-                      items: { type: Type.STRING },
-                      description: '25-50 SEO keywords ordered by relevance',
-                    },
-                    category_guess: { type: Type.STRING, description: 'Primary stock category name' },
-                  },
-                  required: ['title', 'description', 'keywords', 'category_guess'],
-                },
               },
             });
 
