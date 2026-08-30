@@ -197,6 +197,9 @@ function formatProviderErrorMessage(provider: string, err: any): string {
     if (lower.includes('api_key_invalid') || lower.includes('invalid api key') || lower.includes('api key not valid') || lower.includes('api_key')) {
       return 'Invalid Gemini API Key. Please verify your key in Google AI Studio (https://aistudio.google.com/app/apikey).';
     }
+    if (lower.includes('503') || lower.includes('high demand') || lower.includes('unavailable')) {
+      return 'Google Gemini model is temporarily experiencing high global demand (503). Retrying automatically...';
+    }
     if (lower.includes('429') || lower.includes('quota') || lower.includes('resource_exhausted')) {
       return 'Gemini API Rate limit reached (429). Please wait a few moments or use a paid/different API key.';
     }
@@ -204,7 +207,7 @@ function formatProviderErrorMessage(provider: string, err: any): string {
       return 'Permission denied for this Gemini API key. Ensure the Generative Language API is enabled.';
     }
     if (lower.includes('model_not_found') || (lower.includes('404') && lower.includes('models/'))) {
-      return 'Selected Gemini model not found. Switching to Gemini 3.7 Flash.';
+      return 'Selected Gemini model not found. Switching to Gemini Flash.';
     }
   } else if (provider === 'openai') {
     if (lower.includes('401') || lower.includes('invalid_api_key')) {
@@ -254,14 +257,45 @@ app.post('/api/test-key', async (req, res) => {
     if (provider === 'gemini') {
       const { client: ai } = getGenAIClient(apiKey || undefined);
       const testModel = normalizeGeminiModel(model);
-      const response = await ai.models.generateContent({
-        model: testModel,
-        contents: 'Respond with standard text: OK',
-      });
-      return res.json({
-        success: true,
-        message: `Successfully connected to Google Gemini (${testModel})!`,
-        reply: response.text?.trim() || 'OK',
+      const candidateModels = Array.from(new Set([testModel, 'gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.1-flash-lite']));
+      
+      let lastErr: any = null;
+      for (const curModel of candidateModels) {
+        try {
+          const response = await ai.models.generateContent({
+            model: curModel,
+            contents: 'Respond with standard text: OK',
+          });
+          return res.json({
+            success: true,
+            message: `Successfully connected to Google Gemini (${curModel})!`,
+            modelUsed: curModel,
+            reply: response.text?.trim() || 'OK',
+          });
+        } catch (err: any) {
+          lastErr = err;
+          const errStr = (err?.message || String(err)).toLowerCase();
+          // If error is 503, 404, or rate limit, try next model candidate
+          if (
+            errStr.includes('503') ||
+            errStr.includes('unavailable') ||
+            errStr.includes('high demand') ||
+            errStr.includes('404') ||
+            errStr.includes('not found') ||
+            errStr.includes('429') ||
+            errStr.includes('resource_exhausted')
+          ) {
+            continue;
+          }
+          // If invalid key or permission denied, break immediately
+          break;
+        }
+      }
+
+      const formattedError = formatProviderErrorMessage('gemini', lastErr);
+      return res.status(400).json({
+        success: false,
+        error: formattedError,
       });
     }
 
@@ -419,6 +453,7 @@ Generate stock SEO metadata as JSON.`;
     // ==========================================
     if (provider === 'gemini') {
       const selectedModel = normalizeGeminiModel(model);
+      const candidateModels = Array.from(new Set([selectedModel, 'gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.1-flash-lite']));
       const keyPool = getApiKeyPool();
       const hasCustomKey = !!apiKey?.trim();
       const totalKeys = hasCustomKey ? 1 : Math.max(keyPool.length, 1);
@@ -426,80 +461,90 @@ Generate stock SEO metadata as JSON.`;
       let attempts = 0;
       let lastError: any = null;
 
-      while (attempts < Math.max(totalKeys, 1) * 2) {
-        const currentAttemptIndex = hasCustomKey ? 0 : (activeKeyIndex + attempts) % totalKeys;
-        const { client: ai, keySnippet } = hasCustomKey
-          ? getGenAIClient(apiKey)
-          : getGenAIClient();
+      for (const curModel of candidateModels) {
+        let modelSuccess = false;
+        attempts = 0;
+        
+        while (attempts < (hasCustomKey ? 2 : totalKeys * 2)) {
+          const currentAttemptIndex = hasCustomKey ? 0 : (activeKeyIndex + attempts) % totalKeys;
+          const { client: ai, keySnippet } = hasCustomKey
+            ? getGenAIClient(apiKey)
+            : getGenAIClient();
 
-        try {
-          console.log(
-            `[Gemini AI] Processing ${filename} using model ${selectedModel} (${keySnippet})...`
-          );
+          try {
+            console.log(
+              `[Gemini AI] Processing ${filename} using model ${curModel} (${keySnippet})...`
+            );
 
-          const response = await ai.models.generateContent({
-            model: selectedModel,
-            contents: {
-              parts: [
-                {
-                  inlineData: {
-                    mimeType: safeMimeType,
-                    data: base64Data,
+            const response = await ai.models.generateContent({
+              model: curModel,
+              contents: {
+                parts: [
+                  {
+                    inlineData: {
+                      mimeType: safeMimeType,
+                      data: base64Data,
+                    },
                   },
-                },
-                { text: promptText },
-              ],
-            },
-            config: {
-              systemInstruction,
-              temperature: 0.2,
-              responseMimeType: 'application/json',
-              responseSchema: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING, description: 'Stock title max 70 chars, no commas' },
-                  description: { type: Type.STRING, description: '1-2 sentence detailed visual description' },
-                  keywords: {
-                    type: Type.ARRAY,
-                    items: { type: Type.STRING },
-                    description: '25-50 SEO keywords ordered by relevance',
-                  },
-                  category_guess: { type: Type.STRING, description: 'Primary stock category name' },
-                },
-                required: ['title', 'description', 'keywords', 'category_guess'],
+                  { text: promptText },
+                ],
               },
-            },
-          });
+              config: {
+                systemInstruction,
+                temperature: 0.2,
+                responseMimeType: 'application/json',
+                responseSchema: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING, description: 'Stock title max 70 chars, no commas' },
+                    description: { type: Type.STRING, description: '1-2 sentence detailed visual description' },
+                    keywords: {
+                      type: Type.ARRAY,
+                      items: { type: Type.STRING },
+                      description: '25-50 SEO keywords ordered by relevance',
+                    },
+                    category_guess: { type: Type.STRING, description: 'Primary stock category name' },
+                  },
+                  required: ['title', 'description', 'keywords', 'category_guess'],
+                },
+              },
+            });
 
-          resultText = response.text || '';
-          if (!hasCustomKey) {
-            activeKeyIndex = currentAttemptIndex;
+            resultText = response.text || '';
+            if (!hasCustomKey) {
+              activeKeyIndex = currentAttemptIndex;
+            }
+            modelSuccess = true;
+            break;
+          } catch (err: any) {
+            lastError = err;
+            const errStr = (err?.message || String(err)).toLowerCase();
+
+            attempts++;
+
+            if (!hasCustomKey && (errStr.includes('429') || errStr.includes('quota') || errStr.includes('limit') || errStr.includes('resource_exhausted'))) {
+              activeKeyIndex = (activeKeyIndex + 1) % totalKeys;
+            }
+
+            // If it's a 503 or 404 or 429, retry after slight delay or switch model
+            if (errStr.includes('503') || errStr.includes('unavailable') || errStr.includes('high demand') || errStr.includes('404') || errStr.includes('not found')) {
+              break; // break to next model in candidateModels
+            }
+
+            if (hasCustomKey && (errStr.includes('invalid') || errStr.includes('permission_denied') || errStr.includes('403'))) {
+              throw new Error(formatProviderErrorMessage('gemini', err));
+            }
           }
+        }
+
+        if (modelSuccess && resultText) {
           break;
-        } catch (err: any) {
-          lastError = err;
-          const errStr = (err?.message || String(err)).toLowerCase();
-
-          attempts++;
-
-          if (hasCustomKey) {
-            throw new Error(`Gemini API Error: ${err?.message || err}`);
-          }
-
-          if (
-            errStr.includes('429') ||
-            errStr.includes('quota') ||
-            errStr.includes('limit') ||
-            errStr.includes('resource_exhausted')
-          ) {
-            activeKeyIndex = (activeKeyIndex + 1) % totalKeys;
-          }
         }
       }
 
       if (!resultText) {
         throw new Error(
-          `Gemini API failed after attempts. Error: ${lastError?.message || lastError}`
+          formatProviderErrorMessage('gemini', lastError)
         );
       }
     }

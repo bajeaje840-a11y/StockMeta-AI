@@ -189,11 +189,10 @@ export async function testAiKeyDirectly(
     }
 
     const testModel = normalizeGeminiModel(model);
-    const candidateModels = [testModel, 'gemini-3.7-flash', 'gemini-flash-latest'];
-    const uniqueModels = Array.from(new Set(candidateModels));
+    const candidateModels = Array.from(new Set([testModel, 'gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.1-flash-lite']));
 
     let lastError: any = null;
-    for (const curModel of uniqueModels) {
+    for (const curModel of candidateModels) {
       try {
         const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${curModel}:generateContent?key=${encodeURIComponent(cleanKey)}`;
         const res = await fetch(endpoint, {
@@ -225,11 +224,19 @@ export async function testAiKeyDirectly(
         };
       } catch (err: any) {
         lastError = err;
-        // If it was model not found, try next candidate model
         const errMsg = String(err?.message || '').toLowerCase();
-        if (!errMsg.includes('not found') && !errMsg.includes('404')) {
-          break;
+        // If it's a transient 503, 404, or 429, try next model candidate
+        if (
+          errMsg.includes('503') ||
+          errMsg.includes('unavailable') ||
+          errMsg.includes('high demand') ||
+          errMsg.includes('not found') ||
+          errMsg.includes('404') ||
+          errMsg.includes('429')
+        ) {
+          continue;
         }
+        break;
       }
     }
 
@@ -373,7 +380,7 @@ export async function generateGeminiMetadataDirectly(options: {
   }
 
   const selectedModel = normalizeGeminiModel(model);
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${encodeURIComponent(apiKey.trim())}`;
+  const candidateModels = Array.from(new Set([selectedModel, 'gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.1-flash-lite']));
 
   const promptText = `Analyze this image thoroughly for microstock marketplace SEO submission (Adobe Stock, Shutterstock, Freepik, Getty).
 
@@ -394,40 +401,68 @@ Return JSON format:
   "category_guess": "Graphic Resources"
 }`;
 
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [
-        {
-          parts: [
+  let lastError: any = null;
+  let parsed: any = null;
+  let actualModelUsed = selectedModel;
+
+  for (const curModel of candidateModels) {
+    try {
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${curModel}:generateContent?key=${encodeURIComponent(apiKey.trim())}`;
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
             {
-              inlineData: {
-                mimeType: mimeType.startsWith('image/') ? mimeType : 'image/jpeg',
-                data: base64Data,
-              },
-            },
-            {
-              text: promptText,
+              parts: [
+                {
+                  inlineData: {
+                    mimeType: mimeType.startsWith('image/') ? mimeType : 'image/jpeg',
+                    data: base64Data,
+                  },
+                },
+                {
+                  text: promptText,
+                },
+              ],
             },
           ],
-        },
-      ],
-      generationConfig: {
-        responseMimeType: 'application/json',
-        temperature: 0.2,
-      },
-    }),
-  });
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.2,
+          },
+        }),
+      });
 
-  const responseText = await res.text();
-  if (!res.ok) {
-    throw new Error(parseApiErrorMessage('gemini', null, responseText));
+      const responseText = await res.text();
+      if (!res.ok) {
+        throw new Error(parseApiErrorMessage('gemini', null, responseText));
+      }
+
+      const json = JSON.parse(responseText);
+      const rawContent = json.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+      parsed = JSON.parse(rawContent);
+      actualModelUsed = curModel;
+      break;
+    } catch (err: any) {
+      lastError = err;
+      const errMsg = String(err?.message || '').toLowerCase();
+      if (
+        errMsg.includes('503') ||
+        errMsg.includes('unavailable') ||
+        errMsg.includes('high demand') ||
+        errMsg.includes('not found') ||
+        errMsg.includes('404')
+      ) {
+        continue;
+      }
+      break;
+    }
   }
 
-  const json = JSON.parse(responseText);
-  const rawContent = json.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
-  const parsed = JSON.parse(rawContent);
+  if (!parsed) {
+    throw new Error(parseApiErrorMessage('gemini', lastError));
+  }
 
   const clean = sanitizeMicrostockMetadata(parsed, filename);
   const adobeCat = mapToAdobeCategory(clean.category_guess, clean.title + ' ' + clean.keywords.join(' '));
@@ -442,6 +477,6 @@ Return JSON format:
     shutterstockCategory1: cat1,
     shutterstockCategory2: cat2,
     providerUsed: 'gemini',
-    modelUsed: model,
+    modelUsed: actualModelUsed,
   };
 }
