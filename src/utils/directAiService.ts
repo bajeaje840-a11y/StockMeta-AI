@@ -18,6 +18,29 @@ export interface DirectMetadataResult {
   modelUsed: string;
 }
 
+export function extractJsonFromText(rawText: string): any {
+  if (!rawText) return {};
+  let cleaned = rawText.trim();
+  // Strip markdown codeblocks e.g. ```json ... ``` or ``` ... ```
+  cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+
+  try {
+    return JSON.parse(cleaned);
+  } catch (e1) {
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      const sub = cleaned.substring(firstBrace, lastBrace + 1);
+      try {
+        return JSON.parse(sub);
+      } catch (e2) {
+        // Continue
+      }
+    }
+    throw new Error(`Failed to parse metadata JSON: ${cleaned.substring(0, 100)}`);
+  }
+}
+
 /**
  * Clean & sanitize metadata fields according to microstock rules
  */
@@ -123,6 +146,9 @@ export function parseApiErrorMessage(provider: string, err: any, rawResponseText
   const lower = msg.toLowerCase();
 
   if (provider === 'gemini') {
+    if (lower.includes('503') || lower.includes('high demand') || lower.includes('unavailable')) {
+      return 'Google Gemini model is temporarily busy (503). Retrying automatically with backup model...';
+    }
     if (lower.includes('api_key_invalid') || lower.includes('invalid api key') || lower.includes('api key not valid') || lower.includes('api_key')) {
       return 'Invalid Gemini API Key. Please verify your key in Google AI Studio (https://aistudio.google.com/app/apikey).';
     }
@@ -133,7 +159,7 @@ export function parseApiErrorMessage(provider: string, err: any, rawResponseText
       return 'Permission denied for this Gemini API key. Ensure the Generative Language API is enabled in your Google Cloud / AI Studio project.';
     }
     if (lower.includes('model_not_found') || (lower.includes('404') && lower.includes('models/'))) {
-      return 'Selected Gemini model not found. Switching to Gemini 3.7 Flash.';
+      return 'Selected Gemini model not found. Switching to Gemini Flash.';
     }
   } else if (provider === 'openai') {
     if (lower.includes('401') || lower.includes('invalid_api_key') || lower.includes('incorrect api key')) {
@@ -441,7 +467,7 @@ Return JSON format:
 
       const json = JSON.parse(responseText);
       const rawContent = json.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
-      parsed = JSON.parse(rawContent);
+      parsed = extractJsonFromText(rawContent);
       actualModelUsed = curModel;
       break;
     } catch (err: any) {
@@ -452,11 +478,13 @@ Return JSON format:
         errMsg.includes('unavailable') ||
         errMsg.includes('high demand') ||
         errMsg.includes('not found') ||
-        errMsg.includes('404')
+        errMsg.includes('404') ||
+        errMsg.includes('429')
       ) {
         continue;
       }
-      break;
+      // If parsing failed or single request failed, try next model as fallback
+      continue;
     }
   }
 

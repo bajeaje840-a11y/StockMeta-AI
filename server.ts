@@ -478,17 +478,15 @@ Generate stock SEO metadata as JSON.`;
 
             const response = await ai.models.generateContent({
               model: curModel,
-              contents: {
-                parts: [
-                  {
-                    inlineData: {
-                      mimeType: safeMimeType,
-                      data: base64Data,
-                    },
+              contents: [
+                {
+                  inlineData: {
+                    mimeType: safeMimeType,
+                    data: base64Data,
                   },
-                  { text: promptText },
-                ],
-              },
+                },
+                promptText,
+              ],
               config: {
                 systemInstruction,
                 temperature: 0.2,
@@ -511,6 +509,13 @@ Generate stock SEO metadata as JSON.`;
             });
 
             resultText = response.text || '';
+            if (!resultText && response.candidates?.[0]?.content?.parts) {
+              for (const part of response.candidates[0].content.parts) {
+                if (part.text) {
+                  resultText += part.text;
+                }
+              }
+            }
             if (!hasCustomKey) {
               activeKeyIndex = currentAttemptIndex;
             }
