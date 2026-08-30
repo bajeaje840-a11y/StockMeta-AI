@@ -142,9 +142,9 @@ export function renderSvgToPng(file: File): Promise<string> {
 }
 
 /**
- * Downscales an image/dataUrl to max dimensions (1280px) and converts to JPEG for fast AI vision processing
+ * Downscales an image/dataUrl to max dimensions (960px) and converts to JPEG for fast AI vision processing
  */
-export function compressImageForAi(dataUrl: string, maxDim = 1280): Promise<{ base64Data: string; mimeType: string }> {
+export function compressImageForAi(dataUrl: string, maxDim = 960): Promise<{ base64Data: string; mimeType: string }> {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
@@ -169,7 +169,7 @@ export function compressImageForAi(dataUrl: string, maxDim = 1280): Promise<{ ba
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.80);
         resolve({
           base64Data: compressedDataUrl.split(',')[1],
           mimeType: 'image/jpeg',
