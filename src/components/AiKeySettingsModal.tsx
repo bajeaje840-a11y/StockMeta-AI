@@ -1,0 +1,524 @@
+import React, { useState, useEffect } from 'react';
+import {
+  X,
+  Key,
+  Sparkles,
+  Bot,
+  Cpu,
+  Zap,
+  Globe,
+  CheckCircle2,
+  AlertCircle,
+  Eye,
+  EyeOff,
+  ExternalLink,
+  Loader2,
+  Sliders,
+  Check,
+  ShieldCheck,
+  HelpCircle,
+  FileCode,
+} from 'lucide-react';
+import { AiConfig, AiProvider } from '../types';
+import { AI_PROVIDERS, isProviderReady, saveAiConfig } from '../data/aiModels';
+
+interface AiKeySettingsModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  aiConfig: AiConfig;
+  onSaveConfig: (updated: AiConfig) => void;
+  onTriggerBatchAfterSave?: () => void;
+  promptReason?: string; // If triggered because a key is missing
+}
+
+export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
+  isOpen,
+  onClose,
+  aiConfig,
+  onSaveConfig,
+  onTriggerBatchAfterSave,
+  promptReason,
+}) => {
+  const [formData, setFormData] = useState<AiConfig>(aiConfig);
+  const [activeTab, setActiveTab] = useState<AiProvider>(aiConfig.activeProvider || 'gemini');
+  const [showKeyMap, setShowKeyMap] = useState<Record<string, boolean>>({});
+  const [testStatus, setTestStatus] = useState<{
+    loading: boolean;
+    success?: boolean;
+    message?: string;
+    error?: string;
+  }>({ loading: false });
+
+  // Sync state when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setFormData(aiConfig);
+      setActiveTab(aiConfig.activeProvider || 'gemini');
+      setTestStatus({ loading: false });
+    }
+  }, [isOpen, aiConfig]);
+
+  if (!isOpen) return null;
+
+  const currentProviderMeta = AI_PROVIDERS[activeTab];
+
+  const toggleShowKey = (provider: string) => {
+    setShowKeyMap((prev) => ({ ...prev, [provider]: !prev[provider] }));
+  };
+
+  const getProviderIcon = (provider: AiProvider) => {
+    switch (provider) {
+      case 'gemini':
+        return <Sparkles className="w-4 h-4 text-indigo-500" />;
+      case 'openai':
+        return <Bot className="w-4 h-4 text-emerald-500" />;
+      case 'claude':
+        return <Cpu className="w-4 h-4 text-amber-500" />;
+      case 'deepseek':
+        return <Zap className="w-4 h-4 text-cyan-500" />;
+      case 'custom':
+        return <Globe className="w-4 h-4 text-purple-500" />;
+    }
+  };
+
+  const isConfigured = (p: AiProvider) => {
+    return isProviderReady(formData, p).ready;
+  };
+
+  // Test connection to backend
+  const handleTestConnection = async () => {
+    setTestStatus({ loading: true, success: undefined, message: undefined, error: undefined });
+
+    let keyToTest = '';
+    let modelToTest = '';
+    let baseUrlToTest = '';
+
+    if (activeTab === 'gemini') {
+      keyToTest = formData.geminiKey;
+      modelToTest = formData.geminiModel;
+    } else if (activeTab === 'openai') {
+      keyToTest = formData.openaiKey;
+      modelToTest = formData.openaiModel;
+      baseUrlToTest = formData.openaiBaseUrl || '';
+    } else if (activeTab === 'claude') {
+      keyToTest = formData.claudeKey;
+      modelToTest = formData.claudeModel;
+    } else if (activeTab === 'deepseek') {
+      keyToTest = formData.deepseekKey;
+      modelToTest = formData.deepseekModel;
+      baseUrlToTest = formData.deepseekBaseUrl || '';
+    } else if (activeTab === 'custom') {
+      keyToTest = formData.customKey || '';
+      modelToTest = formData.customModel || '';
+      baseUrlToTest = formData.customBaseUrl || '';
+    }
+
+    try {
+      const res = await fetch('/api/test-key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: activeTab,
+          apiKey: keyToTest,
+          model: modelToTest,
+          baseUrl: baseUrlToTest,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setTestStatus({
+          loading: false,
+          success: true,
+          message: data.message || 'API connection verified successfully!',
+        });
+      } else {
+        setTestStatus({
+          loading: false,
+          success: false,
+          error: data.error || 'Failed to connect. Please check your API key.',
+        });
+      }
+    } catch (err: any) {
+      setTestStatus({
+        loading: false,
+        success: false,
+        error: err.message || 'Network error while testing connection.',
+      });
+    }
+  };
+
+  const handleSaveAndApply = (startBatchAfter = false) => {
+    const updated = {
+      ...formData,
+      activeProvider: activeTab,
+    };
+    saveAiConfig(updated);
+    onSaveConfig(updated);
+    onClose();
+
+    if (startBatchAfter && onTriggerBatchAfterSave) {
+      onTriggerBatchAfterSave();
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 w-full max-w-3xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] transition-colors">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/50">
+          <div className="flex items-center space-x-3">
+            <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">
+              <Key className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                AI Provider & API Keys Configuration
+              </h2>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Choose your AI engine (Gemini, ChatGPT, Claude, DeepSeek) for microstock SEO metadata generation
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-200/60 dark:hover:bg-gray-800 transition"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Missing Key Notification Banner (if triggered during batch start) */}
+        {promptReason && (
+          <div className="px-6 py-3 bg-amber-500/10 border-b border-amber-500/20 flex items-center space-x-3 text-amber-700 dark:text-amber-300 text-xs">
+            <AlertCircle className="w-4 h-4 flex-shrink-0 text-amber-500" />
+            <span>{promptReason}</span>
+          </div>
+        )}
+
+        {/* Modal Body with Provider Tabs */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {/* Provider Selection Tabs */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">
+              Select AI Engine:
+            </label>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+              {(Object.keys(AI_PROVIDERS) as AiProvider[]).map((pKey) => {
+                const meta = AI_PROVIDERS[pKey];
+                const isActive = activeTab === pKey;
+                const configured = isConfigured(pKey);
+
+                return (
+                  <button
+                    key={pKey}
+                    type="button"
+                    onClick={() => {
+                      setActiveTab(pKey);
+                      setTestStatus({ loading: false });
+                    }}
+                    className={`relative p-3 rounded-xl border flex flex-col items-center text-center transition-all ${
+                      isActive
+                        ? 'bg-indigo-500/10 border-indigo-500 dark:border-indigo-400 text-indigo-900 dark:text-indigo-100 shadow-sm ring-1 ring-indigo-500'
+                        : 'bg-gray-50 dark:bg-gray-800/60 border-gray-200 dark:border-gray-700/80 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
+                    }`}
+                  >
+                    <div className="mb-1.5">{getProviderIcon(pKey)}</div>
+                    <span className="text-xs font-bold truncate w-full">{meta.shortName}</span>
+                    <span className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">
+                      {configured ? (
+                        <span className="text-emerald-600 dark:text-emerald-400 flex items-center justify-center gap-0.5">
+                          <Check className="w-2.5 h-2.5" /> Ready
+                        </span>
+                      ) : (
+                        <span className="text-amber-500">Key Needed</span>
+                      )}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Active Provider Details Card */}
+          <div className="p-4 rounded-xl bg-gray-50 dark:bg-gray-800/40 border border-gray-200 dark:border-gray-700/80 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-gray-200 dark:border-gray-700">
+              <div className="flex items-center space-x-2.5">
+                {getProviderIcon(activeTab)}
+                <div>
+                  <h3 className="text-sm font-bold text-gray-900 dark:text-white">
+                    {currentProviderMeta.name}
+                  </h3>
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                    {currentProviderMeta.tagline}
+                  </p>
+                </div>
+              </div>
+
+              <a
+                href={currentProviderMeta.keyHelpUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center space-x-1 text-xs text-indigo-600 dark:text-indigo-400 hover:underline font-medium"
+              >
+                <span>Get API Key</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            </div>
+
+            {/* API Key Input */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
+                  <Key className="w-3.5 h-3.5 text-gray-500" />
+                  <span>API Key</span>
+                  {activeTab === 'gemini' && (
+                    <span className="text-[10px] font-normal text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.2 rounded">
+                      Optional (Server Key Pool Active)
+                    </span>
+                  )}
+                </label>
+                <span className="text-[10px] text-gray-400">
+                  {currentProviderMeta.keyFormatHint}
+                </span>
+              </div>
+
+              <div className="relative flex items-center">
+                <input
+                  type={showKeyMap[activeTab] ? 'text' : 'password'}
+                  placeholder={currentProviderMeta.keyPlaceholder}
+                  value={
+                    activeTab === 'gemini'
+                      ? formData.geminiKey
+                      : activeTab === 'openai'
+                      ? formData.openaiKey
+                      : activeTab === 'claude'
+                      ? formData.claudeKey
+                      : activeTab === 'deepseek'
+                      ? formData.deepseekKey
+                      : formData.customKey || ''
+                  }
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (activeTab === 'gemini') setFormData((p) => ({ ...p, geminiKey: val }));
+                    else if (activeTab === 'openai') setFormData((p) => ({ ...p, openaiKey: val }));
+                    else if (activeTab === 'claude') setFormData((p) => ({ ...p, claudeKey: val }));
+                    else if (activeTab === 'deepseek') setFormData((p) => ({ ...p, deepseekKey: val }));
+                    else setFormData((p) => ({ ...p, customKey: val }));
+                  }}
+                  className="w-full text-xs rounded-xl bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 pl-3 pr-16 py-2.5 text-gray-900 dark:text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm"
+                />
+
+                <div className="absolute right-2 flex items-center space-x-1">
+                  <button
+                    type="button"
+                    onClick={() => toggleShowKey(activeTab)}
+                    className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                    title={showKeyMap[activeTab] ? 'Hide API key' : 'Show API key'}
+                  >
+                    {showKeyMap[activeTab] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Model Selection Dropdown */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-gray-700 dark:text-gray-300">
+                Choose Model:
+              </label>
+              <select
+                value={
+                  activeTab === 'gemini'
+                    ? formData.geminiModel
+                    : activeTab === 'openai'
+                    ? formData.openaiModel
+                    : activeTab === 'claude'
+                    ? formData.claudeModel
+                    : activeTab === 'deepseek'
+                    ? formData.deepseekModel
+                    : formData.customModel || ''
+                }
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (activeTab === 'gemini') setFormData((p) => ({ ...p, geminiModel: val }));
+                  else if (activeTab === 'openai') setFormData((p) => ({ ...p, openaiModel: val }));
+                  else if (activeTab === 'claude') setFormData((p) => ({ ...p, claudeModel: val }));
+                  else if (activeTab === 'deepseek') setFormData((p) => ({ ...p, deepseekModel: val }));
+                  else setFormData((p) => ({ ...p, customModel: val }));
+                }}
+                className="w-full text-xs rounded-xl bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 px-3 py-2.5 text-gray-900 dark:text-white font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm"
+              >
+                {currentProviderMeta.models.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name} {m.recommended ? '⭐ (Recommended)' : ''} - {m.description}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Optional Custom Base URL for DeepSeek, OpenRouter, Custom */}
+            {(activeTab === 'deepseek' || activeTab === 'custom' || activeTab === 'openai') && (
+              <div className="space-y-1.5 pt-1">
+                <label className="text-xs font-medium text-gray-600 dark:text-gray-400 flex items-center justify-between">
+                  <span>Custom API Base URL (Optional)</span>
+                  <span className="text-[10px] text-gray-400">Leave blank for default API</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder={
+                    activeTab === 'deepseek'
+                      ? 'https://api.deepseek.com'
+                      : activeTab === 'custom'
+                      ? 'https://openrouter.ai/api/v1 or http://localhost:11434/v1'
+                      : 'https://api.openai.com/v1'
+                  }
+                  value={
+                    activeTab === 'deepseek'
+                      ? formData.deepseekBaseUrl || ''
+                      : activeTab === 'openai'
+                      ? formData.openaiBaseUrl || ''
+                      : formData.customBaseUrl || ''
+                  }
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (activeTab === 'deepseek') setFormData((p) => ({ ...p, deepseekBaseUrl: val }));
+                    else if (activeTab === 'openai') setFormData((p) => ({ ...p, openaiBaseUrl: val }));
+                    else setFormData((p) => ({ ...p, customBaseUrl: val }));
+                  }}
+                  className="w-full text-xs rounded-xl bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 px-3 py-2 text-gray-900 dark:text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+            )}
+
+            {/* Test Connection Button & Status */}
+            <div className="pt-2 flex flex-wrap items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={handleTestConnection}
+                disabled={testStatus.loading}
+                className="inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 transition"
+              >
+                {testStatus.loading ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-500" />
+                    <span>Testing Connection...</span>
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck className="w-3.5 h-3.5 text-indigo-500" />
+                    <span>Test {currentProviderMeta.shortName} Connection</span>
+                  </>
+                )}
+              </button>
+
+              {testStatus.success && (
+                <div className="flex items-center space-x-1 text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>{testStatus.message}</span>
+                </div>
+              )}
+
+              {testStatus.error && (
+                <div className="flex items-center space-x-1 text-xs text-rose-600 dark:text-rose-400 font-medium max-w-sm truncate">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  <span title={testStatus.error}>{testStatus.error}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Microstock Marketplace Generation Settings */}
+          <div className="p-4 rounded-xl bg-gray-50 dark:bg-gray-800/40 border border-gray-200 dark:border-gray-700/80 space-y-4">
+            <h4 className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wider flex items-center gap-1.5">
+              <Sliders className="w-3.5 h-3.5 text-indigo-500" />
+              Microstock SEO Output Preferences
+            </h4>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Keyword Count */}
+              <div>
+                <div className="flex justify-between items-center text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <span>Target Keyword Count:</span>
+                  <span className="font-bold text-indigo-600 dark:text-indigo-400">
+                    {formData.keywordCount || 40} tags
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="25"
+                  max="50"
+                  step="5"
+                  value={formData.keywordCount || 40}
+                  onChange={(e) =>
+                    setFormData((p) => ({ ...p, keywordCount: parseInt(e.target.value, 10) }))
+                  }
+                  className="w-full h-1.5 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                />
+                <div className="flex justify-between text-[10px] text-gray-400 mt-1">
+                  <span>25 tags (Min)</span>
+                  <span>40 tags (Standard)</span>
+                  <span>50 tags (Adobe/Shutterstock Max)</span>
+                </div>
+              </div>
+
+              {/* Custom Guidance Instructions */}
+              <div>
+                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Custom Prompt Guidance (Optional):
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g., Focus on 3D illustration, pastel background, copy space"
+                  value={formData.customInstructions || ''}
+                  onChange={(e) =>
+                    setFormData((p) => ({ ...p, customInstructions: e.target.value }))
+                  }
+                  className="w-full text-xs rounded-xl bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer Actions */}
+        <div className="px-6 py-4 border-t border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/50 flex flex-wrap items-center justify-between gap-3">
+          <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1.5">
+            <span>Active Engine:</span>
+            <span className="font-bold text-gray-900 dark:text-white">
+              {AI_PROVIDERS[activeTab].name}
+            </span>
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-xs font-semibold rounded-xl text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition"
+            >
+              Cancel
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleSaveAndApply(false)}
+              className="px-4 py-2 text-xs font-semibold rounded-xl text-white bg-indigo-600 hover:bg-indigo-700 shadow-md shadow-indigo-500/20 transition"
+            >
+              Save Configuration
+            </button>
+
+            {promptReason && (
+              <button
+                type="button"
+                onClick={() => handleSaveAndApply(true)}
+                className="px-4 py-2 text-xs font-semibold rounded-xl text-white bg-emerald-600 hover:bg-emerald-700 shadow-md shadow-emerald-500/20 transition"
+              >
+                Save & Start Processing
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};

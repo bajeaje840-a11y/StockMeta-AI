@@ -1,10 +1,26 @@
 import React, { useState, useEffect } from 'react';
-import { Sparkles, ShieldAlert, Sun, Moon, Trash2, Key, RefreshCw } from 'lucide-react';
-import { ExportSettings, QueueStats } from '../types';
+import {
+  Sparkles,
+  ShieldAlert,
+  Sun,
+  Moon,
+  Trash2,
+  Key,
+  RefreshCw,
+  Bot,
+  Cpu,
+  Zap,
+  Globe,
+  ChevronDown,
+} from 'lucide-react';
+import { AiConfig, AiProvider, ExportSettings, QueueStats } from '../types';
+import { AI_PROVIDERS, isProviderReady } from '../data/aiModels';
 
 interface NavbarProps {
   stats: QueueStats;
   exportSettings: ExportSettings;
+  aiConfig: AiConfig;
+  onOpenAiSettings: () => void;
   onOpenBlocklist: () => void;
   onClearQueue: () => void;
   darkMode: boolean;
@@ -14,6 +30,8 @@ interface NavbarProps {
 export const Navbar: React.FC<NavbarProps> = ({
   stats,
   exportSettings,
+  aiConfig,
+  onOpenAiSettings,
   onOpenBlocklist,
   onClearQueue,
   darkMode,
@@ -42,6 +60,24 @@ export const Navbar: React.FC<NavbarProps> = ({
     return () => clearInterval(interval);
   }, []);
 
+  const activeMeta = AI_PROVIDERS[aiConfig.activeProvider || 'gemini'];
+  const providerReady = isProviderReady(aiConfig).ready;
+
+  const getProviderIcon = (provider: AiProvider) => {
+    switch (provider) {
+      case 'gemini':
+        return <Sparkles className="w-3.5 h-3.5 text-indigo-500" />;
+      case 'openai':
+        return <Bot className="w-3.5 h-3.5 text-emerald-500" />;
+      case 'claude':
+        return <Cpu className="w-3.5 h-3.5 text-amber-500" />;
+      case 'deepseek':
+        return <Zap className="w-3.5 h-3.5 text-cyan-500" />;
+      case 'custom':
+        return <Globe className="w-3.5 h-3.5 text-purple-500" />;
+    }
+  };
+
   return (
     <header className="sticky top-0 z-30 border-b border-gray-200 dark:border-gray-800 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md transition-colors">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
@@ -67,17 +103,38 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Right Action Tools */}
         <div className="flex items-center space-x-2 sm:space-x-3">
-          {/* API Key Rotation Status Badge */}
-          {keyStatus && (
+          {/* AI Model & Key Selection Button */}
+          <button
+            id="ai-settings-btn"
+            onClick={onOpenAiSettings}
+            className={`flex items-center space-x-2 px-3 py-1.5 rounded-xl text-xs font-semibold border transition shadow-sm ${
+              providerReady
+                ? 'bg-gray-50 dark:bg-gray-800/80 border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800'
+                : 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20 animate-pulse'
+            }`}
+            title="Configure AI Engine API Keys & Models (Gemini, ChatGPT, Claude, DeepSeek)"
+          >
+            <div className="flex items-center space-x-1.5">
+              {getProviderIcon(aiConfig.activeProvider || 'gemini')}
+              <span className="font-bold">{activeMeta.shortName}</span>
+            </div>
+
+            <div className="hidden md:flex items-center space-x-1 text-[11px] text-gray-400 border-l border-gray-200 dark:border-gray-700 pl-2">
+              <Key className="w-3 h-3 text-gray-400" />
+              <span>{providerReady ? 'Configured' : 'Set Key'}</span>
+            </div>
+
+            <ChevronDown className="w-3 h-3 text-gray-400" />
+          </button>
+
+          {/* API Key Rotation Status Badge (when Gemini is active) */}
+          {aiConfig.activeProvider === 'gemini' && keyStatus && keyStatus.totalKeys > 1 && (
             <div
-              className="hidden lg:flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20"
-              title="Multi-Key Rotation Pool Active: Automatically switches API key on rate limit (429) / quota exhaust and loops back"
+              className="hidden xl:flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20"
+              title="Multi-Key Rotation Pool Active: Automatically rotates on 429 rate limit"
             >
-              <Key className="w-3.5 h-3.5 text-emerald-500" />
-              <span>
-                Key Rotation: Slot #{keyStatus.currentActiveIndex + 1} ({keyStatus.totalKeys} Keys Pool)
-              </span>
-              <RefreshCw className="w-3 h-3 text-emerald-500 ml-1 animate-spin-slow" />
+              <RefreshCw className="w-3 h-3 text-emerald-500" />
+              <span>Key Slot #{keyStatus.currentActiveIndex + 1}</span>
             </div>
           )}
 
@@ -128,3 +185,4 @@ export const Navbar: React.FC<NavbarProps> = ({
     </header>
   );
 };
+

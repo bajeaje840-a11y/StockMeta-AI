@@ -16,9 +16,15 @@ import {
   ChevronDown,
   Settings,
   Sparkles,
+  Key,
+  Bot,
+  Cpu,
+  Zap,
+  Globe,
 } from 'lucide-react';
-import { ExportSettings, PlatformId, QueueStats } from '../types';
+import { AiConfig, AiProvider, ExportSettings, PlatformId, QueueStats } from '../types';
 import { PLATFORM_CONFIGS } from '../data/platforms';
+import { AI_PROVIDERS, isProviderReady } from '../data/aiModels';
 
 interface QueueControlsProps {
   stats: QueueStats;
@@ -37,6 +43,8 @@ interface QueueControlsProps {
   onSearchChange: (q: string) => void;
   filterStatus: string;
   onFilterStatusChange: (status: string) => void;
+  aiConfig: AiConfig;
+  onOpenAiSettings: () => void;
 }
 
 export const QueueControls: React.FC<QueueControlsProps> = ({
@@ -56,10 +64,38 @@ export const QueueControls: React.FC<QueueControlsProps> = ({
   onSearchChange,
   filterStatus,
   onFilterStatusChange,
+  aiConfig,
+  onOpenAiSettings,
 }) => {
   const [showSettingsDropdown, setShowSettingsDropdown] = useState(false);
 
   const currentPlatformConfig = PLATFORM_CONFIGS[exportSettings.selectedPlatform];
+  const activeMeta = AI_PROVIDERS[aiConfig.activeProvider || 'gemini'];
+  const providerReady = isProviderReady(aiConfig).ready;
+
+  const getProviderIcon = (provider: AiProvider) => {
+    switch (provider) {
+      case 'gemini':
+        return <Sparkles className="w-3.5 h-3.5 text-indigo-500" />;
+      case 'openai':
+        return <Bot className="w-3.5 h-3.5 text-emerald-500" />;
+      case 'claude':
+        return <Cpu className="w-3.5 h-3.5 text-amber-500" />;
+      case 'deepseek':
+        return <Zap className="w-3.5 h-3.5 text-cyan-500" />;
+      case 'custom':
+        return <Globe className="w-3.5 h-3.5 text-purple-500" />;
+    }
+  };
+
+  const getActiveModelName = () => {
+    const p = aiConfig.activeProvider || 'gemini';
+    if (p === 'gemini') return aiConfig.geminiModel || 'Gemini 2.5 Flash';
+    if (p === 'openai') return aiConfig.openaiModel || 'GPT-4o Mini';
+    if (p === 'claude') return aiConfig.claudeModel || 'Claude 3.5 Haiku';
+    if (p === 'deepseek') return aiConfig.deepseekModel || 'DeepSeek Chat';
+    return aiConfig.customModel || 'Custom AI';
+  };
 
   return (
     <div className="w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm p-5 mb-6 space-y-5 transition-colors">
@@ -138,7 +174,7 @@ export const QueueControls: React.FC<QueueControlsProps> = ({
       {/* Middle Row: Batch Actions & Concurrency Slider */}
       <div className="flex flex-wrap items-center justify-between gap-4 pt-2 border-t border-gray-100 dark:border-gray-800">
         {/* Left Queue Action Controls */}
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2.5">
           {queueState === 'running' ? (
             <button
               id="pause-queue-btn"
@@ -153,12 +189,37 @@ export const QueueControls: React.FC<QueueControlsProps> = ({
               id="start-resume-btn"
               onClick={onStartResume}
               disabled={stats.queued === 0 && stats.failed === 0}
-              className="inline-flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-indigo-500/20 transition"
+              className="inline-flex items-center space-x-2 px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-indigo-500/20 transition"
             >
               <Play className="w-4 h-4 fill-current" />
-              <span>{queueState === 'paused' ? 'Resume Processing' : 'Start Processing Batch'}</span>
+              <span>{queueState === 'paused' ? 'Resume Processing' : 'Generate AI Metadata'}</span>
             </button>
           )}
+
+          {/* AI Engine Badge Pill with quick settings link */}
+          <button
+            onClick={onOpenAiSettings}
+            className={`inline-flex items-center space-x-2 px-3 py-2 rounded-xl text-xs font-medium border transition ${
+              providerReady
+                ? 'bg-gray-50 dark:bg-gray-800/80 border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
+                : 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20'
+            }`}
+            title="Click to switch AI model or configure API keys"
+          >
+            {getProviderIcon(aiConfig.activeProvider || 'gemini')}
+            <span>Engine:</span>
+            <span className="font-bold text-gray-900 dark:text-white">
+              {activeMeta.shortName}
+            </span>
+            <span className="text-[10px] text-gray-400 dark:text-gray-500 font-mono">
+              ({getActiveModelName()})
+            </span>
+            {!providerReady && (
+              <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-500 text-white">
+                Key Needed
+              </span>
+            )}
+          </button>
 
           {/* Cancel All */}
           {(queueState === 'running' || stats.processing > 0) && (
@@ -340,3 +401,4 @@ export const QueueControls: React.FC<QueueControlsProps> = ({
     </div>
   );
 };
+

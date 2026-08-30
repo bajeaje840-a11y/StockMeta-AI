@@ -207,6 +207,15 @@ export const EditDrawer: React.FC<EditDrawerProps> = ({
             ) : (
               <FileImage className="w-12 h-12 text-gray-400" />
             )}
+
+            {/* AI Model Attribution Pill */}
+            {(file.providerUsed || file.modelUsed) && (
+              <div className="absolute bottom-2 right-2 px-2.5 py-1 rounded-lg bg-black/70 backdrop-blur-sm text-white text-[11px] font-medium flex items-center space-x-1.5 shadow-md">
+                <Sparkles className="w-3 h-3 text-indigo-400" />
+                <span className="capitalize">{file.providerUsed || 'AI'}:</span>
+                <span className="font-mono text-gray-300">{file.modelUsed}</span>
+              </div>
+            )}
           </div>
 
           {/* Title Editor */}

@@ -5,16 +5,18 @@ import { QueueControls } from './components/QueueControls';
 import { QueueTable } from './components/QueueTable';
 import { EditDrawer } from './components/EditDrawer';
 import { BlocklistModal } from './components/BlocklistModal';
+import { AiKeySettingsModal } from './components/AiKeySettingsModal';
 import {
+  AiConfig,
   ExportSettings,
   PlatformId,
   QueueStats,
   StockFile,
 } from './types';
 import { DEFAULT_TRADEMARK_BLOCKLIST, mapToAdobeCategory, mapToShutterstockCategory } from './data/platforms';
+import { loadAiConfig, saveAiConfig, isProviderReady, AI_PROVIDERS } from './data/aiModels';
 import { getFormatCategory, prepareFileForAi } from './utils/fileHelpers';
 import { downloadAllPlatformsZip, downloadCSV, generateCSV } from './utils/csvExporter';
-import { Sparkles, CheckCircle2, AlertCircle, Info, FileSpreadsheet } from 'lucide-react';
 
 export default function App() {
   const [files, setFiles] = useState<StockFile[]>([]);
@@ -22,7 +24,15 @@ export default function App() {
   const [concurrency, setConcurrency] = useState<number>(3);
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [isBlocklistOpen, setIsBlocklistOpen] = useState(false);
-  const [darkMode, setDarkMode] = useState<boolean>(true);
+  const [isAiSettingsOpen, setIsAiSettingsOpen] = useState(false);
+  const [aiPromptReason, setAiPromptReason] = useState<string | undefined>(undefined);
+  const [aiConfig, setAiConfig] = useState<AiConfig>(() => loadAiConfig());
+
+  const [darkMode, setDarkMode] = useState<boolean>(() => {
+    const saved = localStorage.getItem('theme');
+    if (saved) return saved === 'dark';
+    return true; // Default to dark theme
+  });
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
 
@@ -38,10 +48,15 @@ export default function App() {
 
   // Dark mode effect
   useEffect(() => {
+    const root = document.documentElement;
     if (darkMode) {
-      document.documentElement.classList.add('dark');
+      root.classList.add('dark');
+      root.style.colorScheme = 'dark';
+      localStorage.setItem('theme', 'dark');
     } else {
-      document.documentElement.classList.remove('dark');
+      root.classList.remove('dark');
+      root.style.colorScheme = 'light';
+      localStorage.setItem('theme', 'light');
     }
   }, [darkMode]);
 
@@ -56,112 +71,175 @@ export default function App() {
   };
 
   /**
-   * Worker function to process a single file via Gemini API
+   * Helper to get active credentials & model based on active AI provider
    */
-  const processSingleFile = useCallback(async (file: StockFile) => {
-    const controller = new AbortController();
-    activeControllersRef.current.set(file.id, controller);
+  const getActiveAiCredentials = useCallback(() => {
+    const provider = aiConfig.activeProvider || 'gemini';
+    let apiKey = '';
+    let model = '';
+    let baseUrl = '';
 
-    try {
-      // 1. Prepare preview & base64 image data
-      let base64Data = file.base64Data;
-      let mimeTypeForAi = file.mimeTypeForAi;
-      let previewUrl = file.previewUrl;
+    if (provider === 'gemini') {
+      apiKey = aiConfig.geminiKey || '';
+      model = aiConfig.geminiModel || 'gemini-2.5-flash';
+    } else if (provider === 'openai') {
+      apiKey = aiConfig.openaiKey || '';
+      model = aiConfig.openaiModel || 'gpt-4o-mini';
+      baseUrl = aiConfig.openaiBaseUrl || '';
+    } else if (provider === 'claude') {
+      apiKey = aiConfig.claudeKey || '';
+      model = aiConfig.claudeModel || 'claude-3-5-haiku-20241022';
+    } else if (provider === 'deepseek') {
+      apiKey = aiConfig.deepseekKey || '';
+      model = aiConfig.deepseekModel || 'deepseek-chat';
+      baseUrl = aiConfig.deepseekBaseUrl || '';
+    } else if (provider === 'custom') {
+      apiKey = aiConfig.customKey || '';
+      model = aiConfig.customModel || 'meta-llama/llama-3.2-11b-vision-instruct';
+      baseUrl = aiConfig.customBaseUrl || '';
+    }
 
-      if ((!base64Data || !previewUrl) && file.file) {
-        const prep = await prepareFileForAi(file.file);
-        base64Data = prep.base64Data;
-        mimeTypeForAi = prep.mimeTypeForAi;
-        previewUrl = prep.previewUrl;
+    return { provider, apiKey, model, baseUrl };
+  }, [aiConfig]);
 
-        setFiles((prev) =>
-          prev.map((f) =>
-            f.id === file.id
-              ? { ...f, base64Data, mimeTypeForAi, previewUrl }
-              : f
-          )
-        );
-      }
+  /**
+   * Worker function to process a single file via multi-provider AI API
+   */
+  const processSingleFile = useCallback(
+    async (file: StockFile) => {
+      const controller = new AbortController();
+      activeControllersRef.current.set(file.id, controller);
 
-      if (!base64Data) {
-        throw new Error('Could not read image base64 data for AI processing.');
-      }
-
-      // 2. Call server-side API endpoint
-      const response = await fetch('/api/generate-metadata', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          base64Data,
-          mimeType: mimeTypeForAi,
-          filename: file.name,
-        }),
-      });
-
-      const responseText = await response.text();
-      let resData: any = {};
       try {
-        resData = JSON.parse(responseText);
-      } catch (parseErr) {
-        throw new Error(`Server returned non-JSON error (${response.status}).`);
-      }
+        // 1. Prepare preview & base64 image data
+        let base64Data = file.base64Data;
+        let mimeTypeForAi = file.mimeTypeForAi;
+        let previewUrl = file.previewUrl;
 
-      if (!response.ok || !resData.success) {
-        throw new Error(resData.error || `Server responded with status ${response.status}`);
-      }
+        if ((!base64Data || !previewUrl) && file.file) {
+          const prep = await prepareFileForAi(file.file);
+          base64Data = prep.base64Data;
+          mimeTypeForAi = prep.mimeTypeForAi;
+          previewUrl = prep.previewUrl;
 
-      const meta = resData.metadata;
-      const adobeCat = mapToAdobeCategory(meta.category_guess, meta.title + ' ' + (meta.keywords || []).join(' '));
-      const { cat1, cat2 } = mapToShutterstockCategory(meta.category_guess, meta.title + ' ' + (meta.keywords || []).join(' '));
+          setFiles((prev) =>
+            prev.map((f) =>
+              f.id === file.id
+                ? { ...f, base64Data, mimeTypeForAi, previewUrl }
+                : f
+            )
+          );
+        }
 
-      // 3. Update file with generated AI metadata
-      setFiles((prev) =>
-        prev.map((f) =>
-          f.id === file.id
-            ? {
-                ...f,
-                status: 'success',
-                title: meta.title || f.name,
-                description: meta.description || meta.title || f.name,
-                keywords: meta.keywords || [],
-                category_guess: meta.category_guess || 'Graphic Resources',
-                adobeCategory: adobeCat,
-                shutterstockCategory1: cat1,
-                shutterstockCategory2: cat2,
-                errorMessage: undefined,
-              }
-            : f
-        )
-      );
-    } catch (err: any) {
-      if (err.name === 'AbortError') {
-        setFiles((prev) =>
-          prev.map((f) => (f.id === file.id ? { ...f, status: 'cancelled' } : f))
+        if (!base64Data) {
+          throw new Error('Could not read image base64 data for AI processing.');
+        }
+
+        const creds = getActiveAiCredentials();
+
+        // 2. Call server-side multi-provider API endpoint
+        const response = await fetch('/api/generate-metadata', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            provider: creds.provider,
+            apiKey: creds.apiKey,
+            model: creds.model,
+            baseUrl: creds.baseUrl,
+            base64Data,
+            mimeType: mimeTypeForAi,
+            filename: file.name,
+            keywordCount: aiConfig.keywordCount || 40,
+            customPromptHint: aiConfig.customInstructions || '',
+          }),
+        });
+
+        const responseText = await response.text();
+        let resData: any = {};
+        try {
+          resData = JSON.parse(responseText);
+        } catch (parseErr) {
+          throw new Error(`Server returned non-JSON error (${response.status}).`);
+        }
+
+        if (!response.ok || !resData.success) {
+          throw new Error(resData.error || `Server responded with status ${response.status}`);
+        }
+
+        const meta = resData.metadata;
+        const adobeCat = mapToAdobeCategory(
+          meta.category_guess,
+          meta.title + ' ' + (meta.keywords || []).join(' ')
         );
-      } else {
+        const { cat1, cat2 } = mapToShutterstockCategory(
+          meta.category_guess,
+          meta.title + ' ' + (meta.keywords || []).join(' ')
+        );
+
+        // 3. Update file with generated AI metadata
         setFiles((prev) =>
           prev.map((f) =>
             f.id === file.id
               ? {
                   ...f,
-                  status: 'failed',
-                  errorMessage: err?.message || 'Failed to generate metadata',
+                  status: 'success',
+                  title: meta.title || f.name,
+                  description: meta.description || meta.title || f.name,
+                  keywords: meta.keywords || [],
+                  category_guess: meta.category_guess || 'Graphic Resources',
+                  adobeCategory: adobeCat,
+                  shutterstockCategory1: cat1,
+                  shutterstockCategory2: cat2,
+                  providerUsed: resData.providerUsed || creds.provider,
+                  modelUsed: resData.modelUsed || creds.model,
+                  errorMessage: undefined,
                 }
               : f
           )
         );
+      } catch (err: any) {
+        if (err.name === 'AbortError') {
+          setFiles((prev) =>
+            prev.map((f) => (f.id === file.id ? { ...f, status: 'cancelled' } : f))
+          );
+        } else {
+          setFiles((prev) =>
+            prev.map((f) =>
+              f.id === file.id
+                ? {
+                    ...f,
+                    status: 'failed',
+                    errorMessage: err?.message || 'Failed to generate metadata',
+                  }
+                : f
+            )
+          );
+        }
+      } finally {
+        activeControllersRef.current.delete(file.id);
       }
-    } finally {
-      activeControllersRef.current.delete(file.id);
-    }
-  }, []);
+    },
+    [getActiveAiCredentials, aiConfig]
+  );
 
   /**
    * Queue Manager Loop: monitors queueState and triggers up to `concurrency` parallel tasks
    */
   useEffect(() => {
     if (queueState !== 'running') return;
+
+    // Check if the current AI provider has required key before running
+    const status = isProviderReady(aiConfig);
+    if (!status.ready) {
+      setQueueState('paused');
+      const meta = AI_PROVIDERS[aiConfig.activeProvider || 'gemini'];
+      setAiPromptReason(
+        `Please enter your ${meta.name} API key to start generating microstock metadata.`
+      );
+      setIsAiSettingsOpen(true);
+      return;
+    }
 
     const queuedFiles = files.filter((f) => f.status === 'queued');
     const processingFiles = files.filter((f) => f.status === 'processing');
@@ -190,7 +268,7 @@ export default function App() {
         processSingleFile(file);
       });
     }
-  }, [files, queueState, concurrency, processSingleFile]);
+  }, [files, queueState, concurrency, processSingleFile, aiConfig]);
 
   /**
    * Handle Uploading files/folders
@@ -235,7 +313,18 @@ export default function App() {
     }
 
     setFiles((prev) => [...prev, ...preparedList]);
-    setQueueState('running');
+
+    // Check if provider is ready
+    const status = isProviderReady(aiConfig);
+    if (!status.ready) {
+      const meta = AI_PROVIDERS[aiConfig.activeProvider || 'gemini'];
+      setAiPromptReason(
+        `Files added! Please enter your ${meta.name} API key to start generating metadata.`
+      );
+      setIsAiSettingsOpen(true);
+    } else {
+      setQueueState('running');
+    }
   };
 
   /**
@@ -243,17 +332,22 @@ export default function App() {
    */
   const handlePause = () => {
     setQueueState('paused');
-    // Abort active HTTP calls
     activeControllersRef.current.forEach((controller) => controller.abort());
     activeControllersRef.current.clear();
 
-    // Revert processing files back to queued so they resume cleanly
     setFiles((prev) =>
       prev.map((f) => (f.status === 'processing' ? { ...f, status: 'queued' } : f))
     );
   };
 
   const handleStartResume = () => {
+    const status = isProviderReady(aiConfig);
+    if (!status.ready) {
+      const meta = AI_PROVIDERS[aiConfig.activeProvider || 'gemini'];
+      setAiPromptReason(`Please enter your ${meta.name} API key to generate metadata.`);
+      setIsAiSettingsOpen(true);
+      return;
+    }
     setQueueState('running');
   };
 
@@ -279,11 +373,10 @@ export default function App() {
           : f
       )
     );
-    setQueueState('running');
+    handleStartResume();
   };
 
   const handleRegenerateRow = (fileId: string) => {
-    // Abort if currently in flight
     const existingCtrl = activeControllersRef.current.get(fileId);
     if (existingCtrl) {
       existingCtrl.abort();
@@ -297,7 +390,7 @@ export default function App() {
           : f
       )
     );
-    setQueueState('running');
+    handleStartResume();
   };
 
   const handleDeleteRow = (fileId: string) => {
@@ -333,7 +426,7 @@ export default function App() {
           : f
       )
     );
-    setQueueState('running');
+    handleStartResume();
   };
 
   const handleClearQueue = () => {
@@ -383,6 +476,11 @@ export default function App() {
       <Navbar
         stats={stats}
         exportSettings={exportSettings}
+        aiConfig={aiConfig}
+        onOpenAiSettings={() => {
+          setAiPromptReason(undefined);
+          setIsAiSettingsOpen(true);
+        }}
         onOpenBlocklist={() => setIsBlocklistOpen(true)}
         onClearQueue={handleClearQueue}
         darkMode={darkMode}
@@ -420,6 +518,11 @@ export default function App() {
               onSearchChange={setSearchQuery}
               filterStatus={filterStatus}
               onFilterStatusChange={setFilterStatus}
+              aiConfig={aiConfig}
+              onOpenAiSettings={() => {
+                setAiPromptReason(undefined);
+                setIsAiSettingsOpen(true);
+              }}
             />
 
             {/* Queue Table */}
@@ -461,6 +564,24 @@ export default function App() {
         blocklist={exportSettings.customBlocklist}
       />
 
+      {/* AI Key & Provider Settings Modal */}
+      <AiKeySettingsModal
+        isOpen={isAiSettingsOpen}
+        onClose={() => {
+          setIsAiSettingsOpen(false);
+          setAiPromptReason(undefined);
+        }}
+        aiConfig={aiConfig}
+        onSaveConfig={(updated) => {
+          setAiConfig(updated);
+          saveAiConfig(updated);
+        }}
+        onTriggerBatchAfterSave={() => {
+          setQueueState('running');
+        }}
+        promptReason={aiPromptReason}
+      />
+
       {/* Blocklist Modal */}
       <BlocklistModal
         isOpen={isBlocklistOpen}
@@ -477,3 +598,4 @@ export default function App() {
     </div>
   );
 }
+

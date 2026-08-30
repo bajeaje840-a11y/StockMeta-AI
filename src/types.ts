@@ -1,5 +1,35 @@
 export type FileStatus = 'queued' | 'processing' | 'success' | 'failed' | 'cancelled';
 
+export type AiProvider = 'gemini' | 'openai' | 'claude' | 'deepseek' | 'custom';
+
+export interface AiModelOption {
+  id: string;
+  name: string;
+  provider: AiProvider;
+  description: string;
+  isVisionCapable: boolean;
+  recommended?: boolean;
+}
+
+export interface AiConfig {
+  activeProvider: AiProvider;
+  geminiKey: string;
+  geminiModel: string;
+  openaiKey: string;
+  openaiModel: string;
+  openaiBaseUrl?: string;
+  claudeKey: string;
+  claudeModel: string;
+  deepseekKey: string;
+  deepseekModel: string;
+  deepseekBaseUrl?: string;
+  customKey?: string;
+  customModel?: string;
+  customBaseUrl?: string;
+  keywordCount: number; // 25-50 keywords
+  customInstructions?: string;
+}
+
 export interface StockFile {
   id: string;
   file?: File;
@@ -9,7 +39,7 @@ export interface StockFile {
   type: string; // e.g. "image/jpeg", "image/png", "application/pdf", "video/mp4", etc.
   formatCategory: 'image' | 'vector' | 'video' | 'pdf' | 'other';
   previewUrl: string;
-  base64Data?: string; // For sending to Gemini
+  base64Data?: string; // For sending to AI
   mimeTypeForAi: string; // e.g. "image/jpeg" or "image/png"
   status: FileStatus;
   title: string;
@@ -26,6 +56,8 @@ export interface StockFile {
   errorMessage?: string;
   progress?: number;
   addedAt: number;
+  providerUsed?: string;
+  modelUsed?: string;
 }
 
 export type PlatformId =
@@ -67,3 +99,4 @@ export interface QueueStats {
   failed: number;
   cancelled: number;
 }
+
