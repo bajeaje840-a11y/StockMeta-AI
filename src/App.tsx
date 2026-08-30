@@ -333,9 +333,9 @@ export default function App() {
       const extCategory = getFormatCategory(file.name, file.type);
       const fileId = `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-      // Generate initial preview URL if standard image
+      // Generate initial preview URL if standard image or SVG
       let initialPreview = '';
-      if (extCategory === 'image') {
+      if (extCategory === 'image' || file.name.toLowerCase().endsWith('.svg') || file.type.includes('svg')) {
         initialPreview = URL.createObjectURL(file);
       }
 
@@ -353,10 +353,10 @@ export default function App() {
         title: '',
         description: '',
         keywords: [],
-        category_guess: 'Graphic Resources',
-        adobeCategory: 8,
-        shutterstockCategory1: 'Vectors',
-        shutterstockCategory2: 'Arts',
+        category_guess: extCategory === 'vector' ? 'Graphic Resources' : 'Graphic Resources',
+        adobeCategory: extCategory === 'vector' ? 8 : 8,
+        shutterstockCategory1: extCategory === 'vector' ? 'Vectors' : 'Backgrounds/Textures',
+        shutterstockCategory2: extCategory === 'vector' ? 'Arts' : 'Abstract',
         isIllustration: extCategory === 'vector',
         isEditorial: false,
         isMature: false,
@@ -366,6 +366,31 @@ export default function App() {
     }
 
     setFiles((prev) => [...prev, ...preparedList]);
+
+    // Pre-rasterize vector/video previews in background for immediate visual feedback
+    preparedList.forEach(async (item) => {
+      if (item.formatCategory === 'vector' || item.formatCategory === 'video' || item.formatCategory === 'pdf') {
+        try {
+          if (item.file) {
+            const prep = await prepareFileForAi(item.file);
+            setFiles((prev) =>
+              prev.map((f) =>
+                f.id === item.id
+                  ? {
+                      ...f,
+                      previewUrl: prep.previewUrl || f.previewUrl,
+                      base64Data: prep.base64Data || f.base64Data,
+                      mimeTypeForAi: prep.mimeTypeForAi || f.mimeTypeForAi,
+                    }
+                  : f
+              )
+            );
+          }
+        } catch (e) {
+          console.warn('Background preview preloading failed:', e);
+        }
+      }
+    });
 
     // Check if provider is ready
     const status = isProviderReady(aiConfig);

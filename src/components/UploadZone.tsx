@@ -20,14 +20,14 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
   const supportedFormats = [
     { label: 'JPG / JPEG', cat: 'image' },
     { label: 'PNG', cat: 'image' },
-    { label: 'WEBP', cat: 'image' },
-    { label: 'GIF', cat: 'image' },
-    { label: 'TIFF', cat: 'image' },
-    { label: 'HEIC / HEIF', cat: 'image' },
+    { label: 'SVG (Vector)', cat: 'vector' },
+    { label: 'EPS (Vector)', cat: 'vector' },
     { label: 'AI (Illustrator)', cat: 'vector' },
-    { label: 'EPS', cat: 'vector' },
+    { label: 'WEBP', cat: 'image' },
+    { label: 'TIFF', cat: 'image' },
+    { label: 'HEIC', cat: 'image' },
     { label: 'PDF', cat: 'pdf' },
-    { label: 'MP4 / MOV (Video)', cat: 'video' },
+    { label: 'MP4 / MOV', cat: 'video' },
   ];
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -174,7 +174,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
               ref={fileInputRef}
               onChange={handleFileInputChange}
               multiple
-              accept=".jpg,.jpeg,.png,.webp,.gif,.tiff,.tif,.heic,.heif,.ai,.eps,.pdf,.mp4,.mov"
+              accept=".jpg,.jpeg,.png,.webp,.gif,.tiff,.tif,.heic,.heif,.ai,.eps,.svg,.ps,.pdf,.mp4,.mov,image/*,image/svg+xml,application/pdf,application/postscript,application/illustrator"
               className="hidden"
             />
             <input
