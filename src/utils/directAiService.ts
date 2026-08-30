@@ -51,11 +51,11 @@ export function sanitizeMicrostockMetadata(parsed: any, filename: string): {
   category_guess: string;
 } {
   let title = (parsed.title || filename.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ')).trim();
-  title = title.replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
-  if (title.length > 70) {
-    title = title.substring(0, 70).trim();
+  title = title.replace(/,/g, ' ').replace(/["']/g, '').replace(/\s+/g, ' ').trim();
+  if (title.length > 100) {
+    title = title.substring(0, 100).trim();
     const lastSpace = title.lastIndexOf(' ');
-    if (lastSpace > 40) {
+    if (lastSpace > 50) {
       title = title.substring(0, lastSpace).trim();
     }
   }
@@ -65,9 +65,15 @@ export function sanitizeMicrostockMetadata(parsed: any, filename: string): {
     description = description.substring(0, 200).trim();
   }
 
-  const blocklistSet = new Set(
-    DEFAULT_TRADEMARK_BLOCKLIST.map((b) => b.toLowerCase().trim())
-  );
+  const blocklistSet = new Set([
+    ...DEFAULT_TRADEMARK_BLOCKLIST.map((b) => b.toLowerCase().trim()),
+    'apple', 'iphone', 'ipad', 'macbook', 'nike', 'adidas', 'gucci', 'prada', 'chanel',
+    'louis vuitton', 'tesla', 'bmw', 'mercedes', 'audi', 'ferrari', 'porsche', 'ford',
+    'sony', 'canon', 'nikon', 'gopro', 'samsung', 'huawei', 'xiaomi', 'microsoft',
+    'windows', 'android', 'google', 'facebook', 'instagram', 'tiktok', 'twitter', 'youtube',
+    'photoshop', 'illustrator', 'after effects', 'figma', 'canva', 'midjourney', 'dall-e',
+    'chatgpt', 'openai', 'nobody', 'no person', 'no people'
+  ]);
 
   const rawKeywords: string[] = Array.isArray(parsed.keywords)
     ? parsed.keywords
@@ -81,22 +87,27 @@ export function sanitizeMicrostockMetadata(parsed: any, filename: string): {
   for (const kw of rawKeywords) {
     const clean = String(kw || '')
       .toLowerCase()
-      .replace(/[,;]/g, '')
+      .replace(/[,;]/g, ' ')
+      .replace(/^[,\s"']+|[,\s"']+$/g, '')
       .replace(/\s+/g, ' ')
       .trim();
 
-    if (!clean || clean.length < 2 || clean.length > 50) continue;
+    if (!clean || clean.length < 2 || clean.length > 40) continue;
     if (seen.has(clean)) continue;
     if (blocklistSet.has(clean)) continue;
+    if (clean.includes('http') || clean.includes('.com')) continue;
 
     seen.add(clean);
     sanitizedKeywords.push(clean);
   }
 
+  // Cap at 49 tags for Adobe Stock / microstock standard
+  const finalKeywords = sanitizedKeywords.slice(0, 49);
+
   return {
-    title: title || 'Stock illustration or photo',
+    title: title || 'High Quality Stock Media Asset',
     description: description || title,
-    keywords: sanitizedKeywords,
+    keywords: finalKeywords,
     category_guess: parsed.category_guess || 'Graphic Resources',
   };
 }
@@ -399,7 +410,7 @@ export async function generateGeminiMetadataDirectly(options: {
   keywordCount?: number;
   customPromptHint?: string;
 }): Promise<DirectMetadataResult> {
-  const { apiKey, model = 'gemini-3.7-flash', base64Data, mimeType = 'image/jpeg', filename, keywordCount = 45, customPromptHint = '' } = options;
+  const { apiKey, model = 'gemini-3.7-flash', base64Data, mimeType = 'image/jpeg', filename, keywordCount = 49, customPromptHint = '' } = options;
 
   if (!apiKey?.trim()) {
     throw new Error('Gemini API key is missing. Please set your key in AI Settings.');
@@ -407,19 +418,25 @@ export async function generateGeminiMetadataDirectly(options: {
 
   const selectedModel = normalizeGeminiModel(model);
   const candidateModels = Array.from(new Set([selectedModel, 'gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.1-flash-lite']));
+  const targetKwCount = Math.max(25, Math.min(49, keywordCount || 49));
 
-  const promptText = `Analyze this image thoroughly for microstock marketplace SEO submission (Adobe Stock, Shutterstock, Freepik, Getty).
+  const promptText = `You are a world-class Stock Media Metadata & SEO Specialist for Adobe Stock, Shutterstock, Freepik, Getty Images, and Vecteezy.
+Analyze this visual asset (photo, texture, vector, 3D render, or graphic) in extreme visual detail and generate high-converting microstock SEO metadata as valid JSON.
+
+DEEP VISUAL ANALYSIS CRITERIA:
+1. Subject & Core Theme: Identify main object, background scenery, visual action, lighting, mood, color palette, and textures.
+2. Commercial Use Cases: Identify intended applications (web banner, poster, packaging, interior wallpaper, marketing background).
+
+STRICT MICROSTOCK REQUIREMENTS:
+1. Title: 60-90 characters. Descriptive, commercial, packed with top keywords. Strictly NO COMMAS anywhere (Adobe Stock rule).
+2. Description: 1-2 clean sentences describing visual elements, texture, and style.
+3. Keywords: Exactly ${targetKwCount} unique, high-traffic commercial tags. Ordered strictly by relevance (first 10 tags have highest SEO weight on Adobe Stock). NO brand trademarks. Single words or 2-word phrases only.
+4. Category: Best matching microstock category.
 
 Filename: "${filename}"
-Target Keywords: ${keywordCount} tags
 ${customPromptHint ? `Custom Guidance: ${customPromptHint}` : ''}
 
-Strict Rules:
-1. Title: 50-70 characters. Descriptive, commercial, NO commas, NO brands.
-2. Keywords: Exactly ${keywordCount} tags. Ordered from most important/relevant to secondary context.
-3. Category: Guess the best primary stock category.
-
-Return JSON format:
+JSON Response Format:
 {
   "title": "Clear concise descriptive commercial title without commas",
   "description": "Engaging commercial description without trademarks",

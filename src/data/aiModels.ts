@@ -217,7 +217,7 @@ export const DEFAULT_AI_CONFIG: AiConfig = {
   customKey: '',
   customModel: 'meta-llama/llama-3.2-11b-vision-instruct',
   customBaseUrl: 'https://openrouter.ai/api/v1',
-  keywordCount: 40,
+  keywordCount: 49,
   customInstructions: '',
 };
 

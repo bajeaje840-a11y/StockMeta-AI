@@ -159,7 +159,7 @@ export default function App() {
               base64Data,
               mimeType: mimeTypeForAi,
               filename: file.name,
-              keywordCount: aiConfig.keywordCount || 40,
+              keywordCount: aiConfig.keywordCount || 49,
               customPromptHint: aiConfig.customInstructions || '',
             }),
           });

@@ -598,15 +598,15 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
                 <div className="flex justify-between items-center text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
                   <span>Target Keyword Count:</span>
                   <span className="font-bold text-indigo-600 dark:text-indigo-400">
-                    {formData.keywordCount || 40} tags
+                    {formData.keywordCount || 49} tags {formData.keywordCount === 49 ? '(Adobe Stock Optimal)' : ''}
                   </span>
                 </div>
                 <input
                   type="range"
                   min="25"
-                  max="50"
-                  step="5"
-                  value={formData.keywordCount || 40}
+                  max="49"
+                  step="1"
+                  value={formData.keywordCount || 49}
                   onChange={(e) =>
                     setFormData((p) => ({ ...p, keywordCount: parseInt(e.target.value, 10) }))
                   }
@@ -614,8 +614,8 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
                 />
                 <div className="flex justify-between text-[10px] text-gray-400 mt-1">
                   <span>25 tags (Min)</span>
-                  <span>40 tags (Standard)</span>
-                  <span>50 tags (Adobe/Shutterstock Max)</span>
+                  <span>35 tags</span>
+                  <span className="font-semibold text-indigo-500">49 tags (Adobe Stock Max)</span>
                 </div>
               </div>
 
