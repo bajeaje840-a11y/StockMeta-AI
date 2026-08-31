@@ -1,10 +1,15 @@
 import * as pdfjsLib from 'pdfjs-dist';
 // @ts-ignore
 import UTIF from 'utif';
+import { renderPostScriptCodeToCanvas } from './postscriptRenderer';
 
-// Configure PDF.js worker using unpkg or cdnjs
+// Configure PDF.js worker safely
 if (typeof window !== 'undefined' && (pdfjsLib as any).GlobalWorkerOptions) {
-  (pdfjsLib as any).GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version || '4.10.38'}/pdf.worker.min.mjs`;
+  try {
+    (pdfjsLib as any).GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version || '4.10.38'}/pdf.worker.min.mjs`;
+  } catch (e) {
+    // Ignore worker setup error
+  }
 }
 
 /**
@@ -774,12 +779,28 @@ export async function extractEmbeddedImageFromVector(file: File): Promise<{ prev
   const streamResult = await extractEmbeddedStreamFromVector(file);
   if (streamResult) return streamResult;
 
+  // 4. Client-Side Pure PostScript Vector Canvas Interpreter
+  try {
+    const buffer = await file.slice(0, Math.min(file.size, 10 * 1024 * 1024)).arrayBuffer();
+    const textDecoder = new TextDecoder('latin1');
+    const psText = textDecoder.decode(buffer);
+    const psCanvasRes = renderPostScriptCodeToCanvas(psText, 1200);
+    if (psCanvasRes) {
+      return {
+        previewUrl: psCanvasRes.previewUrl,
+        base64Data: psCanvasRes.base64Data,
+        mimeTypeForAi: psCanvasRes.mimeTypeForAi,
+      };
+    }
+  } catch (psErr) {
+    console.warn('Client PostScript canvas interpreter fallback:', psErr);
+  }
+
   return null;
 }
 
 /**
  * Creates a clean, professional vector representation badge when an EPS has no embedded raster preview.
- * CRITICAL: NEVER draws random lines or fake objects. Sets base64Data to empty so AI uses pure text understanding.
  */
 export async function renderEpsCanvasPreview(file: File): Promise<{ previewUrl: string; base64Data: string; mimeTypeForAi: string }> {
   let psText = '';
@@ -852,10 +873,11 @@ export async function renderEpsCanvasPreview(file: File): Promise<{ previewUrl: 
     ctx.fillText('Scalable Vector Graphic', 400, 459);
   }
 
-  const jpegUrl = canvas.toDataURL('image/jpeg', 0.85);
+  const jpegUrl = canvas.toDataURL('image/jpeg', 0.90);
+  const b64 = jpegUrl.split(',')[1] || '';
   return {
     previewUrl: jpegUrl,
-    base64Data: '', // Empty base64 so AI performs 100% accurate text analysis!
+    base64Data: b64,
     mimeTypeForAi: 'image/jpeg',
   };
 }

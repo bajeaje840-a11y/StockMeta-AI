@@ -447,22 +447,22 @@ export async function generateGeminiMetadataDirectly(options: {
     : '';
 
   const promptText = `You are a world-class Stock Media Metadata & SEO Specialist for Adobe Stock, Shutterstock, Freepik, Getty Images, and Vecteezy.
-Analyze this visual asset (photo, texture, vector, 3D render, or graphic) in extreme visual detail and generate high-converting microstock SEO metadata as valid JSON.
+Analyze the provided visual artwork / image in extreme visual detail and generate high-converting microstock SEO metadata as valid JSON.
 
-DEEP VISUAL ANALYSIS CRITERIA:
-1. Subject & Core Theme: Identify main object (${isVector && cleanSubject ? `specifically focusing on "${cleanSubject}"` : 'main subjects'}), background scenery, visual action, lighting, mood, color palette, and textures.
-2. Commercial Use Cases: Identify intended applications (web banner, poster, packaging, interior wallpaper, marketing background).
+DEEP VISUAL CONTENT ANALYSIS REQUIREMENTS:
+1. Visual Content & Objects: Examine the rendered visual artwork carefully. Identify the exact objects, vector illustrations, icons, characters, symbols, textures, badges, background elements, art style (flat, 3D, line art, isometric, vintage, modern), and color palette present in the image.
+2. Content-Accurate Focus: Base your metadata 100% on what is VISIBLE in the image. Do NOT guess or rely solely on the filename.
+3. Commercial Use Cases: Identify intended applications (web graphics, UI icons, banners, packaging, posters, branding).
 
 STRICT MICROSTOCK REQUIREMENTS:
-1. Title: 60-90 characters. Descriptive, commercial, packed with top keywords. Strictly NO COMMAS anywhere (Adobe Stock rule).
-2. Description: 1-2 clean sentences describing visual elements, texture, and style.
-3. Keywords: Exactly ${targetKwCount} unique, high-traffic commercial tags. Ordered strictly by relevance (first 10 tags have highest SEO weight on Adobe Stock). NO brand trademarks. Single words or 2-word phrases only.
-4. Category: Best matching microstock category.
+1. Title: 60-90 characters. Descriptive, commercial, packed with top search keywords describing the actual visual content. Strictly NO COMMAS anywhere (Adobe Stock rule).
+2. Description: 1-2 clean sentences accurately describing the visual elements, style, and design utility.
+3. Keywords: Exactly ${targetKwCount} unique, high-traffic commercial tags. Ordered strictly in descending order of relevance (first 10 tags have highest SEO weight on Adobe Stock). NO brand trademarks. Single words or 2-word phrases only. Strictly lowercase.
+4. Category: Best matching microstock category (e.g., Graphic Resources, Backgrounds/Textures, Transportation, Abstract, Business, Technology, Food, Lifestyle).
 
 Filename: "${filename}"
-${isVector ? `Asset Type: Scalable Vector Graphic / Icon Set Artwork.\nSubject Theme: "${cleanSubject}". Focus metadata accurately on the actual objects/theme (${cleanSubject}).` : ''}
+${isVector ? `Asset Format: Scalable Vector Graphic / Artwork Asset.` : ''}
 ${customPromptHint ? `Custom Guidance: ${customPromptHint}` : ''}
-
 
 JSON Response Format:
 {
