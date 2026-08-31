@@ -496,7 +496,13 @@ app.post('/api/generate-metadata', async (req, res) => {
       customPromptHint,
     } = req.body;
 
-    if (!base64Data) {
+    let cleanBase64 = String(base64Data || '').trim();
+    if (cleanBase64.includes(',')) {
+      cleanBase64 = cleanBase64.split(',')[1].trim();
+    }
+    cleanBase64 = cleanBase64.replace(/[\r\n\s]/g, '');
+
+    if (!cleanBase64) {
       return res.status(400).json({
         success: false,
         error: 'Missing base64Data image payload',
@@ -505,6 +511,9 @@ app.post('/api/generate-metadata', async (req, res) => {
 
     const ALLOWED_MIMES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
     let safeMimeType = (mimeType || '').toLowerCase().trim();
+    if (safeMimeType.includes(';')) {
+      safeMimeType = safeMimeType.split(';')[0].trim();
+    }
     if (!ALLOWED_MIMES.includes(safeMimeType)) {
       safeMimeType = 'image/jpeg';
     }
@@ -587,7 +596,7 @@ Generate premium microstock SEO metadata as valid JSON.`;
                   {
                     inlineData: {
                       mimeType: safeMimeType,
-                      data: base64Data,
+                      data: cleanBase64,
                     },
                   },
                   {
@@ -653,7 +662,7 @@ Generate premium microstock SEO metadata as valid JSON.`;
                       {
                         inlineData: {
                           mimeType: safeMimeType,
-                          data: base64Data,
+                          data: cleanBase64,
                         },
                       },
                       {

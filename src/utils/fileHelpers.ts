@@ -279,8 +279,9 @@ export function compressImageForAi(dataUrl: string, maxDim = 960): Promise<{ bas
  */
 export async function extractEmbeddedXmpThumbnail(file: File): Promise<{ previewUrl: string; base64Data: string; mimeTypeForAi: string } | null> {
   try {
-    const textDecoder = new TextDecoder('utf-8');
-    const buffer = await file.slice(0, Math.min(file.size, 4 * 1024 * 1024)).arrayBuffer();
+    const sliceSize = Math.min(file.size, 2 * 1024 * 1024); // First 2MB is sufficient for XMP
+    const buffer = await file.slice(0, sliceSize).arrayBuffer();
+    const textDecoder = new TextDecoder('latin1'); // latin1 never throws on arbitrary binary bytes
     const text = textDecoder.decode(buffer);
 
     // 1. Match Adobe XMP GImg Thumbnail (<xmpGImg:image> or <xapGImg:image>)
@@ -320,22 +321,24 @@ export async function extractEmbeddedXmpThumbnail(file: File): Promise<{ preview
  * Tries to extract an embedded JPEG or PNG thumbnail from a binary EPS/AI/PDF vector file
  */
 export async function extractEmbeddedImageFromVector(file: File): Promise<{ previewUrl: string; base64Data: string; mimeTypeForAi: string } | null> {
-  // First check XMP packet which is fast and pristine
+  // First check XMP packet which is fast, lossless and non-blocking
   const xmpResult = await extractEmbeddedXmpThumbnail(file);
   if (xmpResult) {
     return xmpResult;
   }
 
   try {
-    const arrayBuffer = await file.arrayBuffer();
+    // Only inspect first 2MB to keep vector processing lightning fast
+    const sliceLen = Math.min(file.size, 2 * 1024 * 1024);
+    const arrayBuffer = await file.slice(0, sliceLen).arrayBuffer();
     const bytes = new Uint8Array(arrayBuffer);
 
     // 1. Check for Binary EPS Header TIFF/JPEG preview (magic 0xC5 0xD0 0xD3 0xC6)
-    if (bytes.length > 30 && bytes[0] === 0xC5 && bytes[1] === 0xD0 && bytes[2] === 0xD3 && bytes[3] === 0xC6) {
+    if (bytes.length > 32 && bytes[0] === 0xC5 && bytes[1] === 0xD0 && bytes[2] === 0xD3 && bytes[3] === 0xC6) {
       const view = new DataView(arrayBuffer);
       const tiffOffset = view.getUint32(20, true);
       const tiffLength = view.getUint32(24, true);
-      if (tiffOffset > 0 && tiffLength > 0 && tiffOffset + tiffLength <= bytes.length) {
+      if (tiffOffset > 0 && tiffLength > 100 && tiffOffset + tiffLength <= bytes.length) {
         const tiffSlice = bytes.subarray(tiffOffset, tiffOffset + tiffLength);
         if (tiffSlice[0] === 0xFF && tiffSlice[1] === 0xD8 && tiffSlice[2] === 0xFF) {
           const blob = new Blob([tiffSlice], { type: 'image/jpeg' });
@@ -347,90 +350,6 @@ export async function extractEmbeddedImageFromVector(file: File): Promise<{ prev
             base64Data: compressed.base64Data,
             mimeTypeForAi: 'image/jpeg',
           };
-        }
-      }
-    }
-
-    // 2. Scan for embedded JPEG streams (0xFF 0xD8 0xFF ... 0xFF 0xD9)
-    const scanLimit = Math.min(bytes.length - 1000, 20 * 1024 * 1024);
-    for (let i = 0; i < scanLimit; i++) {
-      if (bytes[i] === 0xFF && bytes[i + 1] === 0xD8 && bytes[i + 2] === 0xFF) {
-        let endIdx = -1;
-        const maxJpegSearch = Math.min(bytes.length - 1, i + 12 * 1024 * 1024);
-        for (let j = i + 500; j < maxJpegSearch; j++) {
-          if (bytes[j] === 0xFF && bytes[j + 1] === 0xD9) {
-            endIdx = j + 2;
-            break;
-          }
-        }
-        if (endIdx > i) {
-          const jpegBytes = bytes.subarray(i, endIdx);
-          const blob = new Blob([jpegBytes], { type: 'image/jpeg' });
-          const url = URL.createObjectURL(blob);
-
-          const isValid = await new Promise<boolean>((res) => {
-            const img = new Image();
-            img.onload = () => res(img.width >= 10 && img.height >= 10);
-            img.onerror = () => res(false);
-            img.src = url;
-          });
-
-          if (isValid) {
-            const compressed = await compressImageForAi(url);
-            URL.revokeObjectURL(url);
-            return {
-              previewUrl: `data:image/jpeg;base64,${compressed.base64Data}`,
-              base64Data: compressed.base64Data,
-              mimeTypeForAi: 'image/jpeg',
-            };
-          }
-          URL.revokeObjectURL(url);
-        }
-      }
-    }
-
-    // 3. Scan for embedded PNG streams (0x89 0x50 0x4E 0x47)
-    for (let i = 0; i < Math.min(bytes.length - 500, 15 * 1024 * 1024); i++) {
-      if (
-        bytes[i] === 0x89 &&
-        bytes[i + 1] === 0x50 &&
-        bytes[i + 2] === 0x4E &&
-        bytes[i + 3] === 0x47
-      ) {
-        let endIdx = -1;
-        const maxPngSearch = Math.min(bytes.length - 7, i + 10 * 1024 * 1024);
-        for (let j = i + 100; j < maxPngSearch; j++) {
-          if (
-            bytes[j] === 0x49 &&
-            bytes[j + 1] === 0x45 &&
-            bytes[j + 2] === 0x4E &&
-            bytes[j + 3] === 0x44
-          ) {
-            endIdx = j + 8;
-            break;
-          }
-        }
-        if (endIdx > i) {
-          const pngBytes = bytes.subarray(i, endIdx);
-          const blob = new Blob([pngBytes], { type: 'image/png' });
-          const url = URL.createObjectURL(blob);
-          const isValid = await new Promise<boolean>((res) => {
-            const img = new Image();
-            img.onload = () => res(img.width >= 10 && img.height >= 10);
-            img.onerror = () => res(false);
-            img.src = url;
-          });
-
-          if (isValid) {
-            const compressed = await compressImageForAi(url);
-            URL.revokeObjectURL(url);
-            return {
-              previewUrl: `data:image/jpeg;base64,${compressed.base64Data}`,
-              base64Data: compressed.base64Data,
-              mimeTypeForAi: 'image/jpeg',
-            };
-          }
-          URL.revokeObjectURL(url);
         }
       }
     }

@@ -419,9 +419,20 @@ export async function generateGeminiMetadataDirectly(options: {
     throw new Error('Gemini API key is missing. Please set your key in AI Settings.');
   }
 
+  let cleanBase64 = String(base64Data || '').trim();
+  if (cleanBase64.includes(',')) {
+    cleanBase64 = cleanBase64.split(',')[1].trim();
+  }
+  cleanBase64 = cleanBase64.replace(/[\r\n\s]/g, '');
+
+  if (!cleanBase64) {
+    throw new Error('Missing image data for AI processing.');
+  }
+
   const selectedModel = normalizeGeminiModel(model);
   const candidateModels = Array.from(new Set([selectedModel, 'gemini-3.7-flash', 'gemini-flash-latest', 'gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gemini-3.1-pro-preview']));
   const targetKwCount = Math.max(25, Math.min(49, keywordCount || 49));
+  const safeMime = mimeType?.startsWith('image/') ? mimeType.split(';')[0].trim() : 'image/jpeg';
 
   const promptText = `You are a world-class Stock Media Metadata & SEO Specialist for Adobe Stock, Shutterstock, Freepik, Getty Images, and Vecteezy.
 Analyze this visual asset (photo, texture, vector, 3D render, or graphic) in extreme visual detail and generate high-converting microstock SEO metadata as valid JSON.
@@ -463,8 +474,8 @@ JSON Response Format:
               parts: [
                 {
                   inlineData: {
-                    mimeType: mimeType.startsWith('image/') ? mimeType : 'image/jpeg',
-                    data: base64Data,
+                    mimeType: safeMime,
+                    data: cleanBase64,
                   },
                 },
                 {
