@@ -228,20 +228,14 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
           text: 'This looks like an OpenAI/DeepSeek key (starts with "sk-"). Click "ChatGPT / OpenAI" or "DeepSeek" tab above.',
         };
       }
-      if (val.startsWith('AQ.')) {
+      if (val.startsWith('AQ.') || val.startsWith('AQ') || val.startsWith('AIza')) {
         return {
-          type: 'warning',
-          text: 'Notice: This token starts with "AQ." which is not a valid Gemini API key. Google AI Studio keys start with "AIzaSy...". You can click "Use Free Built-in AI" or leave the field blank.',
-        };
-      }
-      if (!val.startsWith('AIza') && val.length > 5) {
-        return {
-          type: 'warning',
-          text: 'Notice: Google Gemini API keys from Google AI Studio start with "AIzaSy...". Please verify your key or leave blank for built-in AI.',
+          type: 'info',
+          text: 'Google Gemini API key format detected (starts with "AQ." or "AIzaSy..."). Click "Test Gemini Connection" to verify.',
         };
       }
     } else if (activeTab === 'openai') {
-      if (val.startsWith('AIza')) {
+      if (val.startsWith('AIza') || val.startsWith('AQ.')) {
         return {
           type: 'warning',
           text: 'This looks like a Google Gemini key. Click the "Gemini" tab above.',
@@ -490,7 +484,7 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
                       >
                         Google AI Studio API Keys
                       </a>{' '}
-                      (starts with <code className="bg-indigo-100 dark:bg-indigo-900/60 px-1 py-0.5 rounded font-mono text-indigo-700 dark:text-indigo-300">AIzaSy...</code>) and paste it.
+                      (starts with <code className="bg-indigo-100 dark:bg-indigo-900/60 px-1 py-0.5 rounded font-mono text-indigo-700 dark:text-indigo-300">AQ...</code> or <code className="bg-indigo-100 dark:bg-indigo-900/60 px-1 py-0.5 rounded font-mono text-indigo-700 dark:text-indigo-300">AIzaSy...</code>) and paste it.
                     </li>
                   </ul>
                 </div>

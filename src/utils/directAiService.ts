@@ -158,7 +158,7 @@ export function parseApiErrorMessage(provider: string, err: any, rawResponseText
 
   if (provider === 'gemini') {
     if (lower.includes('api_key_invalid') || lower.includes('invalid api key') || lower.includes('api key not valid') || lower.includes('api_key') || lower.includes('400') || lower.includes('bad request')) {
-      return 'Invalid Gemini API Key. Google Gemini keys from Google AI Studio start with "AIzaSy...". Please verify your key at https://aistudio.google.com/app/apikey or click "Use Free Built-in AI".';
+      return 'Invalid Gemini API Key. Please verify your key (starts with "AQ." or "AIzaSy...") at https://aistudio.google.com/app/apikey or click "Use Free Built-in AI".';
     }
     if (lower.includes('503') || lower.includes('high demand') || lower.includes('unavailable')) {
       return 'Google Gemini model is temporarily busy (503). Retrying automatically with backup model...';
@@ -226,7 +226,7 @@ export async function testAiKeyDirectly(
     }
 
     const testModel = normalizeGeminiModel(model);
-    const candidateModels = Array.from(new Set([testModel, 'gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.1-flash-lite']));
+    const candidateModels = Array.from(new Set([testModel, 'gemini-3.7-flash', 'gemini-flash-latest', 'gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gemini-3.1-pro-preview']));
 
     let lastError: any = null;
     for (const curModel of candidateModels) {
@@ -417,7 +417,7 @@ export async function generateGeminiMetadataDirectly(options: {
   }
 
   const selectedModel = normalizeGeminiModel(model);
-  const candidateModels = Array.from(new Set([selectedModel, 'gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.1-flash-lite']));
+  const candidateModels = Array.from(new Set([selectedModel, 'gemini-3.7-flash', 'gemini-flash-latest', 'gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gemini-3.1-pro-preview']));
   const targetKwCount = Math.max(25, Math.min(49, keywordCount || 49));
 
   const promptText = `You are a world-class Stock Media Metadata & SEO Specialist for Adobe Stock, Shutterstock, Freepik, Getty Images, and Vecteezy.

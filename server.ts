@@ -196,23 +196,31 @@ app.get('/api/key-status', (req, res) => {
 });
 
 function normalizeGeminiModel(model?: string): string {
-  if (!model) return 'gemini-2.5-flash';
+  if (!model) return 'gemini-3.7-flash';
   const m = model.toLowerCase().trim();
   if (
+    m === 'gemini-2.5-flash' ||
+    m === 'gemini-2.0-flash' ||
+    m === 'gemini-1.5-flash' ||
     m === 'gemini-flash' ||
-    m === 'flash' ||
-    m === 'gemini-flash-latest' ||
-    m === 'gemini-3.7-flash' ||
-    m === 'gemini-3.1-flash-lite'
+    m === 'flash'
   ) {
-    return 'gemini-2.5-flash';
+    return 'gemini-3.7-flash';
   }
   if (
+    m === 'gemini-2.5-pro' ||
+    m === 'gemini-2.0-pro' ||
+    m === 'gemini-1.5-pro' ||
     m === 'gemini-pro' ||
-    m === 'pro' ||
-    m === 'gemini-3.1-pro-preview'
+    m === 'pro'
   ) {
-    return 'gemini-2.5-pro';
+    return 'gemini-3.1-pro-preview';
+  }
+  if (m === 'gemini-3.6-flash') {
+    return 'gemini-3.6-flash';
+  }
+  if (m === 'gemini-3.1-flash-lite' || m === 'flash-lite' || m === 'lite') {
+    return 'gemini-3.1-flash-lite';
   }
   return model;
 }
@@ -233,7 +241,7 @@ function formatProviderErrorMessage(provider: string, err: any): string {
       lower.includes('pass a valid api key') ||
       lower.includes('400 bad request')
     ) {
-      return 'Invalid Gemini API Key. Google Gemini keys from Google AI Studio start with "AIzaSy...". Please verify your key at https://aistudio.google.com/app/apikey or leave the key field empty to use the built-in free AI.';
+      return 'Invalid Gemini API Key. Google Gemini keys start with "AQ." or "AIzaSy...". Please verify your key at https://aistudio.google.com/app/apikey or leave the key field empty to use the built-in free AI.';
     }
     if (lower.includes('503') || lower.includes('high demand') || lower.includes('unavailable')) {
       return 'Google Gemini model is temporarily experiencing high global demand (503). Retrying automatically...';
@@ -309,10 +317,11 @@ app.post('/api/test-key', async (req, res) => {
       const testModel = normalizeGeminiModel(model);
       const candidateModels = Array.from(new Set([
         testModel,
-        'gemini-2.5-flash',
-        'gemini-2.0-flash',
-        'gemini-1.5-flash',
-        'gemini-2.5-pro',
+        'gemini-3.7-flash',
+        'gemini-flash-latest',
+        'gemini-3.6-flash',
+        'gemini-3.1-flash-lite',
+        'gemini-3.1-pro-preview',
       ]));
       
       let lastErr: any = null;
@@ -526,10 +535,11 @@ Generate premium microstock SEO metadata as valid JSON.`;
       const selectedModel = normalizeGeminiModel(model);
       const candidateModels = Array.from(new Set([
         selectedModel,
-        'gemini-2.5-flash',
-        'gemini-2.0-flash',
-        'gemini-1.5-flash',
-        'gemini-2.5-pro',
+        'gemini-3.7-flash',
+        'gemini-flash-latest',
+        'gemini-3.6-flash',
+        'gemini-3.1-flash-lite',
+        'gemini-3.1-pro-preview',
       ]));
       const keyPool = getApiKeyPool();
       const hasCustomKey = !!apiKey?.trim();
