@@ -275,6 +275,81 @@ export function compressImageForAi(dataUrl: string, maxDim = 960): Promise<{ bas
 }
 
 /**
+ * Helper to strictly validate if a data URL or blob URL is a real decodable image in the browser,
+ * and rasterizes it onto a clean canvas with white background to output guaranteed valid JPEG base64.
+ */
+export function validateAndRasterizeImage(
+  srcUrl: string,
+  maxDim = 1000
+): Promise<{ previewUrl: string; base64Data: string; mimeType: string } | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const timer = setTimeout(() => {
+      resolve(null);
+    }, 4000);
+
+    img.onload = () => {
+      clearTimeout(timer);
+      try {
+        const width = img.naturalWidth || img.width;
+        const height = img.naturalHeight || img.height;
+
+        if (!width || !height || width < 10 || height < 10) {
+          resolve(null);
+          return;
+        }
+
+        let targetW = width;
+        let targetH = height;
+        if (targetW > maxDim || targetH > maxDim) {
+          if (targetW > targetH) {
+            targetH = Math.round((targetH * maxDim) / targetW);
+            targetW = maxDim;
+          } else {
+            targetW = Math.round((targetW * maxDim) / targetH);
+            targetH = maxDim;
+          }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(targetW, 100);
+        canvas.height = Math.max(targetH, 100);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(null);
+          return;
+        }
+
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+        const jpegUrl = canvas.toDataURL('image/jpeg', 0.88);
+        const b64 = jpegUrl.split(',')[1];
+        if (b64 && b64.length > 50) {
+          resolve({
+            previewUrl: jpegUrl,
+            base64Data: b64,
+            mimeType: 'image/jpeg',
+          });
+          return;
+        }
+      } catch (err) {
+        console.warn('validateAndRasterizeImage canvas raster exception:', err);
+      }
+      resolve(null);
+    };
+
+    img.onerror = () => {
+      clearTimeout(timer);
+      resolve(null);
+    };
+
+    img.src = srcUrl;
+  });
+}
+
+/**
  * Extracts embedded XMP metadata thumbnail or raster image from AI/EPS files
  */
 export async function extractEmbeddedXmpThumbnail(file: File): Promise<{ previewUrl: string; base64Data: string; mimeTypeForAi: string } | null> {
@@ -289,13 +364,24 @@ export async function extractEmbeddedXmpThumbnail(file: File): Promise<{ preview
     if (xmpImgMatch && xmpImgMatch[1]) {
       const cleanB64 = xmpImgMatch[1].replace(/[\r\n\s]/g, '');
       if (cleanB64.length > 200) {
-        const fullDataUrl = `data:image/jpeg;base64,${cleanB64}`;
-        const compressed = await compressImageForAi(fullDataUrl);
-        return {
-          previewUrl: `data:image/jpeg;base64,${compressed.base64Data}`,
-          base64Data: compressed.base64Data,
-          mimeTypeForAi: 'image/jpeg',
-        };
+        // Test as JPEG
+        const jpegCandidate = await validateAndRasterizeImage(`data:image/jpeg;base64,${cleanB64}`);
+        if (jpegCandidate) {
+          return {
+            previewUrl: jpegCandidate.previewUrl,
+            base64Data: jpegCandidate.base64Data,
+            mimeTypeForAi: 'image/jpeg',
+          };
+        }
+        // Test as PNG
+        const pngCandidate = await validateAndRasterizeImage(`data:image/png;base64,${cleanB64}`);
+        if (pngCandidate) {
+          return {
+            previewUrl: pngCandidate.previewUrl,
+            base64Data: pngCandidate.base64Data,
+            mimeTypeForAi: 'image/jpeg',
+          };
+        }
       }
     }
 
@@ -303,13 +389,14 @@ export async function extractEmbeddedXmpThumbnail(file: File): Promise<{ preview
     const rawB64Match = text.match(/%%BeginPhotoshop:[\s\S]*?([A-Za-z0-9+/=]{500,})[\s\S]*?%%EndPhotoshop/i);
     if (rawB64Match && rawB64Match[1]) {
       const cleanB64 = rawB64Match[1].replace(/[\r\n\s]/g, '');
-      const fullDataUrl = `data:image/jpeg;base64,${cleanB64}`;
-      const compressed = await compressImageForAi(fullDataUrl);
-      return {
-        previewUrl: `data:image/jpeg;base64,${compressed.base64Data}`,
-        base64Data: compressed.base64Data,
-        mimeTypeForAi: 'image/jpeg',
-      };
+      const tested = await validateAndRasterizeImage(`data:image/jpeg;base64,${cleanB64}`);
+      if (tested) {
+        return {
+          previewUrl: tested.previewUrl,
+          base64Data: tested.base64Data,
+          mimeTypeForAi: 'image/jpeg',
+        };
+      }
     }
   } catch (err) {
     console.warn('XMP thumbnail extraction error:', err);
@@ -343,13 +430,43 @@ export async function extractEmbeddedImageFromVector(file: File): Promise<{ prev
         if (tiffSlice[0] === 0xFF && tiffSlice[1] === 0xD8 && tiffSlice[2] === 0xFF) {
           const blob = new Blob([tiffSlice], { type: 'image/jpeg' });
           const url = URL.createObjectURL(blob);
-          const compressed = await compressImageForAi(url);
+          const rasterized = await validateAndRasterizeImage(url);
           URL.revokeObjectURL(url);
-          return {
-            previewUrl: `data:image/jpeg;base64,${compressed.base64Data}`,
-            base64Data: compressed.base64Data,
-            mimeTypeForAi: 'image/jpeg',
-          };
+          if (rasterized) {
+            return {
+              previewUrl: rasterized.previewUrl,
+              base64Data: rasterized.base64Data,
+              mimeTypeForAi: 'image/jpeg',
+            };
+          }
+        }
+      }
+    }
+
+    // 2. Scan for embedded JPEG stream (0xFF 0xD8 0xFF ... 0xFF 0xD9)
+    for (let i = 0; i < Math.min(bytes.length - 500, 1024 * 1024); i++) {
+      if (bytes[i] === 0xFF && bytes[i + 1] === 0xD8 && bytes[i + 2] === 0xFF) {
+        let endIdx = -1;
+        const maxJpegSearch = Math.min(bytes.length - 1, i + 800 * 1024);
+        for (let j = i + 300; j < maxJpegSearch; j++) {
+          if (bytes[j] === 0xFF && bytes[j + 1] === 0xD9) {
+            endIdx = j + 2;
+            break;
+          }
+        }
+        if (endIdx > i) {
+          const jpegSlice = bytes.subarray(i, endIdx);
+          const blob = new Blob([jpegSlice], { type: 'image/jpeg' });
+          const url = URL.createObjectURL(blob);
+          const rasterized = await validateAndRasterizeImage(url);
+          URL.revokeObjectURL(url);
+          if (rasterized) {
+            return {
+              previewUrl: rasterized.previewUrl,
+              base64Data: rasterized.base64Data,
+              mimeTypeForAi: 'image/jpeg',
+            };
+          }
         }
       }
     }

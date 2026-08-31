@@ -634,6 +634,30 @@ Generate premium microstock SEO metadata as valid JSON.`;
               activeKeyIndex = (activeKeyIndex + 1) % totalKeys;
             }
 
+            // If it's an image decoding / invalid inlineData / 400 error, try text-only fallback with vector filename and context
+            if (errStr.includes('decode') || errStr.includes('image') || errStr.includes('bad request') || errStr.includes('400')) {
+              try {
+                console.log(`[Gemini AI] Trying fallback text generation for ${filename}...`);
+                const textFallbackRes = await ai.models.generateContent({
+                  model: curModel,
+                  contents: `${promptText}\nNote: This is a professional scalable vector graphic / artwork asset named "${filename}". Please perform deep visual and conceptual microstock analysis based on the vector metadata and filename to generate complete commercial JSON metadata.`,
+                  config: {
+                    systemInstruction,
+                    temperature: 0.2,
+                    responseMimeType: 'application/json',
+                  },
+                });
+
+                resultText = textFallbackRes.text || '';
+                if (resultText) {
+                  modelSuccess = true;
+                  break;
+                }
+              } catch (fallbackTextErr) {
+                console.warn('[Gemini AI] Vision decode fallback error:', fallbackTextErr);
+              }
+            }
+
             // If it's a 503, 404, 429, timeout or fetch error, retry after slight delay or switch model
             if (
               errStr.includes('503') ||

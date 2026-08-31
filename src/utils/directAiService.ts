@@ -463,8 +463,8 @@ JSON Response Format:
   let actualModelUsed = selectedModel;
 
   for (const curModel of candidateModels) {
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${curModel}:generateContent?key=${encodeURIComponent(apiKey.trim())}`;
     try {
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${curModel}:generateContent?key=${encodeURIComponent(apiKey.trim())}`;
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -504,6 +504,42 @@ JSON Response Format:
     } catch (err: any) {
       lastError = err;
       const errMsg = String(err?.message || '').toLowerCase();
+      // If it's an image decoding / 400 bad request error, try direct text fallback
+      if (errMsg.includes('decode') || errMsg.includes('image') || errMsg.includes('400') || errMsg.includes('bad request')) {
+        try {
+          const textRes = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [
+                {
+                  parts: [
+                    {
+                      text: `${promptText}\nNote: This is a professional scalable vector graphic illustration "${filename}". Generate complete commercial JSON metadata based on vector subject and filename.`,
+                    },
+                  ],
+                },
+              ],
+              generationConfig: {
+                responseMimeType: 'application/json',
+                temperature: 0.2,
+              },
+            }),
+          });
+          if (textRes.ok) {
+            const textJson = await textRes.json();
+            const rawContent = textJson.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (rawContent) {
+              parsed = extractJsonFromText(rawContent);
+              actualModelUsed = curModel;
+              break;
+            }
+          }
+        } catch (textErr) {
+          // continue
+        }
+      }
+
       if (
         errMsg.includes('503') ||
         errMsg.includes('unavailable') ||
