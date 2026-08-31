@@ -434,6 +434,16 @@ export async function generateGeminiMetadataDirectly(options: {
   const targetKwCount = Math.max(25, Math.min(49, keywordCount || 49));
   const safeMime = mimeType?.startsWith('image/') ? mimeType.split(';')[0].trim() : 'image/jpeg';
 
+  const isVector = /\.(eps|ai|svg|pdf|cdr|ps)$/i.test(filename || '') || (mimeType && mimeType.includes('svg'));
+  const cleanSubject = filename
+    ? filename
+        .replace(/\.[^/.]+$/, '')
+        .replace(/^create[_\s-]+/i, '')
+        .replace(/_\d{8,}(?:_\d+)?/g, '')
+        .replace(/[-_]+/g, ' ')
+        .trim()
+    : '';
+
   const promptText = `You are a world-class Stock Media Metadata & SEO Specialist for Adobe Stock, Shutterstock, Freepik, Getty Images, and Vecteezy.
 Analyze this visual asset (photo, texture, vector, 3D render, or graphic) in extreme visual detail and generate high-converting microstock SEO metadata as valid JSON.
 
@@ -448,7 +458,9 @@ STRICT MICROSTOCK REQUIREMENTS:
 4. Category: Best matching microstock category.
 
 Filename: "${filename}"
+${isVector ? `Asset Type: Scalable Vector Graphic / Icon Set Artwork.\nSubject Theme: "${cleanSubject}". Focus metadata accurately on the actual objects/theme (${cleanSubject}).` : ''}
 ${customPromptHint ? `Custom Guidance: ${customPromptHint}` : ''}
+
 
 JSON Response Format:
 {

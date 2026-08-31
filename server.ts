@@ -547,10 +547,22 @@ JSON Response Schema:
   "category_guess": "Graphic Resources"
 }`;
 
+    const isVector = /\.(eps|ai|svg|pdf|cdr|ps)$/i.test(filename || '') || (mimeType && mimeType.includes('svg'));
+    const cleanSubject = filename
+      ? filename
+          .replace(/\.[^/.]+$/, '')
+          .replace(/^create[_\s-]+/i, '')
+          .replace(/_\d{8,}(?:_\d+)?/g, '')
+          .replace(/[-_]+/g, ' ')
+          .trim()
+      : '';
+
     const promptText = `Filename: "${filename || 'stock_media'}".
+${isVector ? `Asset Type: Scalable Vector Graphic / Icon Set Artwork.\nSpecific Subject Theme: "${cleanSubject}". Generate exact, high-accuracy metadata reflecting the vector icons/artwork of "${cleanSubject}".` : ''}
 Target Keyword Count: Exactly ${targetKwCount} keywords.
 ${customPromptHint ? `Custom Guidance: ${customPromptHint}` : ''}
 Generate premium microstock SEO metadata as valid JSON.`;
+
 
     let resultText = '';
 
