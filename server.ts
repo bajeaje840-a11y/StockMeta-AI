@@ -483,13 +483,142 @@ app.post('/api/test-key', async (req, res) => {
 });
 
 /**
- * High-Fidelity Vector Preview & AI Visual Renderer (Ghostscript & ImageMagick)
+ * Multi-Strategy High-Fidelity Vector Preview & AI Visual Renderer (Ghostscript & ImageMagick)
  * Converts EPS, AI, PS, PDF vector files directly into color-accurate, high-resolution JPEG images.
  */
-app.post('/api/render-vector', async (req, res) => {
-  let inPath = '';
-  let outPath = '';
+export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string): Buffer | null {
+  const tmpDir = os.tmpdir();
+  const randId = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+  const ext = (filename && path.extname(filename)) ? path.extname(filename).toLowerCase() : '.eps';
+  const outPath = path.join(tmpDir, `vector_out_${randId}.jpg`);
 
+  try {
+    // Strategy 1: Check for embedded PDF stream (Common in Adobe Illustrator AI/EPS files)
+    const pdfIdx = fileBuffer.indexOf('%PDF-');
+    if (pdfIdx !== -1) {
+      const pdfPath = path.join(tmpDir, `embedded_${randId}.pdf`);
+      try {
+        fs.writeFileSync(pdfPath, fileBuffer.slice(pdfIdx));
+        execSync(
+          `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=92 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${pdfPath}"`,
+          { timeout: 15000, stdio: 'pipe' }
+        );
+        if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+          return fs.readFileSync(outPath);
+        }
+      } catch (e) {
+        // Continue to next strategy
+      } finally {
+        if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath);
+      }
+    }
+
+    // Strategy 2: Check for Binary EPS Header (0xC5 0xD0 0xD3 0xC6)
+    if (fileBuffer.length > 30 && fileBuffer[0] === 0xC5 && fileBuffer[1] === 0xD0 && fileBuffer[2] === 0xD3 && fileBuffer[3] === 0xC6) {
+      const psOffset = fileBuffer.readUInt32LE(4);
+      const psLength = fileBuffer.readUInt32LE(8);
+      const tiffOffset = fileBuffer.readUInt32LE(20);
+      const tiffLength = fileBuffer.readUInt32LE(24);
+
+      // Try TIFF preview from binary header
+      if (tiffOffset > 0 && tiffLength > 0 && fileBuffer.length >= tiffOffset + tiffLength) {
+        const tiffPath = path.join(tmpDir, `embedded_${randId}.tif`);
+        try {
+          fs.writeFileSync(tiffPath, fileBuffer.slice(tiffOffset, tiffOffset + tiffLength));
+          execSync(`convert "${tiffPath}" "${outPath}"`, { timeout: 15000, stdio: 'pipe' });
+          if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+            return fs.readFileSync(outPath);
+          }
+        } catch (e) {
+          // Fallback to PS extraction
+        } finally {
+          if (fs.existsSync(tiffPath)) fs.unlinkSync(tiffPath);
+        }
+      }
+
+      // Try PS block from binary header
+      if (psOffset > 0 && psLength > 0 && fileBuffer.length >= psOffset + psLength) {
+        const psPath = path.join(tmpDir, `extracted_${randId}.eps`);
+        try {
+          fs.writeFileSync(psPath, fileBuffer.slice(psOffset, psOffset + psLength));
+          execSync(
+            `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -dEPSCrop -sDEVICE=jpeg -dJPEGQ=92 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${psPath}"`,
+            { timeout: 15000, stdio: 'pipe' }
+          );
+          if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+            return fs.readFileSync(outPath);
+          }
+        } catch (e) {
+          // Continue
+        } finally {
+          if (fs.existsSync(psPath)) fs.unlinkSync(psPath);
+        }
+      }
+    }
+
+    // Strategy 3: Check for embedded XMP base64 JPEG thumbnail
+    const strHead = fileBuffer.slice(0, 1000000).toString('latin1');
+    const xmpMatch = strHead.match(/<(?:xmpGImg|xapGImg|photoshop):(?:image|Thumbnail)>([\s\S]*?)<\/(?:xmpGImg|xapGImg|photoshop):(?:image|Thumbnail)>/i);
+    if (xmpMatch && xmpMatch[1]) {
+      try {
+        const cleanB64 = xmpMatch[1].replace(/[\r\n\s]/g, '');
+        const xmpBuf = Buffer.from(cleanB64, 'base64');
+        if (xmpBuf.length > 500) {
+          fs.writeFileSync(outPath, xmpBuf);
+          if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+            return fs.readFileSync(outPath);
+          }
+        }
+      } catch (e) {
+        // Continue
+      }
+    }
+
+    // Strategy 4: Direct Ghostscript with -dEPSCrop
+    const inPath = path.join(tmpDir, `raw_${randId}${ext}`);
+    fs.writeFileSync(inPath, fileBuffer);
+
+    try {
+      execSync(
+        `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -dEPSCrop -sDEVICE=jpeg -dJPEGQ=92 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${inPath}"`,
+        { timeout: 15000, stdio: 'pipe' }
+      );
+      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+        return fs.readFileSync(outPath);
+      }
+    } catch (e) {}
+
+    // Strategy 5: Ghostscript standard (without EPSCrop)
+    try {
+      execSync(
+        `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=92 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${inPath}"`,
+        { timeout: 15000, stdio: 'pipe' }
+      );
+      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+        return fs.readFileSync(outPath);
+      }
+    } catch (e) {}
+
+    // Strategy 6: ImageMagick Convert
+    try {
+      execSync(`convert -density 150 "${inPath}" -background white -flatten "${outPath}"`, { timeout: 15000, stdio: 'pipe' });
+      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+        return fs.readFileSync(outPath);
+      }
+    } catch (e) {}
+
+    return null;
+  } catch (err) {
+    console.warn('Vector rendering exception:', err);
+    return null;
+  } finally {
+    try {
+      if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
+    } catch (cleanErr) {}
+  }
+}
+
+app.post('/api/render-vector', async (req, res) => {
   try {
     const { fileData, filename } = req.body;
     if (!fileData) {
@@ -507,68 +636,15 @@ app.post('/api/render-vector', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Empty file buffer' });
     }
 
-    const tmpDir = os.tmpdir();
-    const randId = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-    const ext = (filename && path.extname(filename)) ? path.extname(filename) : '.eps';
-    inPath = path.join(tmpDir, `vector_in_${randId}${ext}`);
-    outPath = path.join(tmpDir, `vector_out_${randId}.jpg`);
-
-    fs.writeFileSync(inPath, fileBuffer);
-
-    let renderSuccess = false;
-
-    // 1. Try Ghostscript with -dEPSCrop (perfect for EPS/PS vector artboards)
-    try {
-      execSync(
-        `gs -dSAFER -dBATCH -dNOPAUSE -dEPSCrop -sDEVICE=jpeg -dJPEGQ=92 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${inPath}"`,
-        { timeout: 15000, stdio: 'pipe' }
-      );
-      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 300) {
-        renderSuccess = true;
-      }
-    } catch (gsCropErr) {
-      // Fallback
-    }
-
-    // 2. Try Ghostscript standard render (without EPSCrop)
-    if (!renderSuccess) {
-      try {
-        execSync(
-          `gs -dSAFER -dBATCH -dNOPAUSE -sDEVICE=jpeg -dJPEGQ=92 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${inPath}"`,
-          { timeout: 15000, stdio: 'pipe' }
-        );
-        if (fs.existsSync(outPath) && fs.statSync(outPath).size > 300) {
-          renderSuccess = true;
-        }
-      } catch (gsStdErr) {
-        // Fallback
-      }
-    }
-
-    // 3. Try ImageMagick convert
-    if (!renderSuccess) {
-      try {
-        execSync(
-          `convert -density 150 "${inPath}" -background white -flatten "${outPath}"`,
-          { timeout: 15000, stdio: 'pipe' }
-        );
-        if (fs.existsSync(outPath) && fs.statSync(outPath).size > 300) {
-          renderSuccess = true;
-        }
-      } catch (convertErr) {
-        // Failed
-      }
-    }
-
-    if (!renderSuccess || !fs.existsSync(outPath)) {
+    const jpegBuffer = renderVectorBufferToJpeg(fileBuffer, filename);
+    if (!jpegBuffer || jpegBuffer.length === 0) {
       return res.status(422).json({
         success: false,
-        error: 'Vector rendering engine could not rasterize this PostScript file.',
+        error: 'Vector rendering engine could not rasterize this PostScript/EPS file.',
       });
     }
 
-    const outBuf = fs.readFileSync(outPath);
-    const outBase64 = outBuf.toString('base64');
+    const outBase64 = jpegBuffer.toString('base64');
     const previewUrl = `data:image/jpeg;base64,${outBase64}`;
 
     return res.json({
@@ -583,13 +659,6 @@ app.post('/api/render-vector', async (req, res) => {
       success: false,
       error: err?.message || 'Failed to render vector preview',
     });
-  } finally {
-    try {
-      if (inPath && fs.existsSync(inPath)) fs.unlinkSync(inPath);
-      if (outPath && fs.existsSync(outPath)) fs.unlinkSync(outPath);
-    } catch (cleanErr) {
-      // Cleanup
-    }
   }
 });
 
@@ -617,7 +686,21 @@ app.post('/api/generate-metadata', async (req, res) => {
     cleanBase64 = cleanBase64.replace(/[\r\n\s]/g, '');
 
     const isVector = /\.(eps|ai|svg|pdf|cdr|ps)$/i.test(filename || '') || (mimeType && mimeType.includes('svg'));
-    const hasImage = cleanBase64.length > 50;
+    let hasImage = cleanBase64.length > 50;
+
+    // If raw vector payload was passed instead of pre-rendered image, attempt on-the-fly rendering
+    if (isVector && cleanBase64.length > 0 && (!mimeType || mimeType.includes('postscript') || mimeType.includes('pdf'))) {
+      try {
+        const rawBuf = Buffer.from(cleanBase64, 'base64');
+        const renderedJpeg = renderVectorBufferToJpeg(rawBuf, filename);
+        if (renderedJpeg && renderedJpeg.length > 500) {
+          cleanBase64 = renderedJpeg.toString('base64');
+          hasImage = true;
+        }
+      } catch (e) {
+        // Fallback
+      }
+    }
 
     if (!hasImage && !isVector) {
       return res.status(400).json({
@@ -649,20 +732,20 @@ app.post('/api/generate-metadata', async (req, res) => {
     const systemInstruction = `You are a world-class Stock Media SEO Specialist & Keywording Expert for Adobe Stock, Shutterstock, Freepik, Getty Images, and Vecteezy.
 Analyze the provided visual asset (photo, texture, vector illustration, icon set, 3D render, or graphic) in extreme visual detail and generate high-converting, strictly compliant commercial SEO metadata in valid JSON format.
 
-DEEP ANALYSIS REQUIREMENTS:
-1. Subject & Concept: Identify the primary subject (${isVector && cleanSubject ? `specifically focusing on "${cleanSubject}"` : 'main objects'}), secondary elements, core themes, emotions, and practical concepts (e.g. transportation, business, luxury, technology, nature, icons, symbols).
-2. Composition, Style & Technique: Note the visual perspective (flat lay, close up, isometric, pattern, icon collection), rendering style (${isVector ? 'scalable vector art, outline / filled icons, isolated vector illustration' : 'photography, 3d render, illustration'}), and color palette.
-3. Commercial & Industry Intent: Identify potential buyer use cases (app UI design, website graphics, print templates, advertising, branding).
+DEEP VISUAL ANALYSIS REQUIREMENTS:
+1. Visual Content & Main Subjects: Thoroughly examine the visual artwork/image. Identify the exact objects, design style, vector illustrations, badges, icons, typography, shapes, symbols, background scenery, and color palette present in the artwork.
+2. Concept & Mood: Identify practical concepts, industries, and intended use cases (e.g. web banners, posters, mobile UI, packaging, advertising, branding).
+3. Composition & Art Style: Recognize whether it is flat vector art, isometric, vintage emblem, line art, modern minimalist, geometric pattern, or 3D render.
 
-STRICT MICROSTOCK RULES:
-- Title: Exactly ONE clear, highly descriptive, commercial sentence (60-90 characters). Packed with the top search keywords. Strictly NEVER include commas in the title (Adobe Stock forbids commas). No quotation marks.
-- Description: 1-2 clean sentences describing the asset's visual elements, background atmosphere, and design value.
+STRICT MICROSTOCK COMPLIANCE RULES:
+- Title: Exactly ONE clear, highly descriptive, commercial sentence (60-90 characters) describing the EXACT visual content in the image. Packed with top search keywords. Strictly NEVER include commas in the title (Adobe Stock forbids commas). No quotation marks.
+- Description: 1-2 clean sentences accurately describing the visual elements, design elements, and commercial applications.
 - Keywords: Provide EXACTLY ${targetKwCount} unique, high-ranking, buyer-focused keywords.
-  * Sort strictly in descending order of relevance (Tags #1 to #10 must be the most exact, high-traffic search terms for ${cleanSubject || 'the asset'}, as Adobe Stock search algorithms weigh the first 10 keywords most heavily).
+  * Sort strictly in descending order of search relevance (Tags #1 to #10 must be the most exact, high-traffic terms representing the visual content, as Adobe Stock algorithms weigh the first 10 keywords most heavily).
   * Use concise single words and 2-word phrases only.
   * STRICTLY lowercase, no commas inside tags, no duplicates, no punctuation.
-  * NO trademarked brand names (no Apple, iPhone, Nike, Adobe, Ferrari, etc.).
-  * NO negative/spam tags (no "nobody", "no people", "no person", "white background" unless truly isolated on pure white).
+  * NO trademarked brand names (no Apple, iPhone, Nike, Adobe, etc.).
+  * NO spam/generic negative tags (no "nobody", "no people", "no person", "white background" unless truly isolated on white).
 - Category: Accurate primary category (e.g., Graphic Resources, Transportation, Backgrounds/Textures, Abstract, Architecture, Business, Technology, Food, Lifestyle).
 
 JSON Response Schema:
@@ -673,11 +756,12 @@ JSON Response Schema:
   "category_guess": "Graphic Resources"
 }`;
 
-    const promptText = `Filename: "${filename || 'stock_media'}".
-${isVector ? `Asset Type: Professional Scalable Vector Graphic / Artwork Asset.\nCore Subject Theme: "${cleanSubject}". Generate exact, high-accuracy metadata directly representing "${cleanSubject}".` : ''}
-Target Keyword Count: Exactly ${targetKwCount} keywords.
+    const promptText = `Analyze the visual content of this artwork in complete detail.
+Filename: "${filename || 'stock_media'}".
+${isVector ? `Asset Format: Scalable Vector Graphic / Vector Artwork Asset.` : ''}
+Target Keyword Count: Exactly ${targetKwCount} unique keywords.
 ${customPromptHint ? `Custom Guidance: ${customPromptHint}` : ''}
-Generate premium microstock SEO metadata as valid JSON.`;
+Inspect the visual image carefully and generate premium, 100% content-accurate microstock SEO metadata as valid JSON.`;
 
     let resultText = '';
 

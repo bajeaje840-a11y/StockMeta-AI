@@ -861,20 +861,20 @@ export async function renderEpsCanvasPreview(file: File): Promise<{ previewUrl: 
 }
 
 /**
- * Calls server-side Ghostscript engine (/api/render-vector) to render genuine PostScript artwork
+ * Calls server-side multi-strategy vector engine (/api/render-vector) to render genuine PostScript/EPS artwork
  */
 export async function renderVectorViaServer(file: File): Promise<{ previewUrl: string; base64Data: string; mimeTypeForAi: string } | null> {
   try {
-    const arrayBuffer = await file.arrayBuffer();
-    const bytes = new Uint8Array(arrayBuffer);
-
-    // Fast chunked binary to base64 conversion
-    let binary = '';
-    const chunkSize = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunkSize)));
-    }
-    const base64Data = btoa(binary);
+    const base64Data = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const res = reader.result as string;
+        const b64 = res.includes(',') ? res.split(',')[1] : res;
+        resolve(b64);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
 
     const response = await fetch('/api/render-vector', {
       method: 'POST',

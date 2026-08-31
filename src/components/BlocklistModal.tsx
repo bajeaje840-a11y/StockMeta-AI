@@ -19,9 +19,9 @@ export const BlocklistModal: React.FC<BlocklistModalProps> = ({
   applyBlocklist,
   onToggleApplyBlocklist,
 }) => {
-  if (!isOpen) return null;
-
   const [newBrandInput, setNewBrandInput] = useState('');
+
+  if (!isOpen) return null;
 
   const handleAddBrand = () => {
     const trimmed = newBrandInput.trim().toLowerCase();

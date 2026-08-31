@@ -45,23 +45,22 @@ export const EditDrawer: React.FC<EditDrawerProps> = ({
   hasNext,
   blocklist,
 }) => {
-  if (!isOpen || !file) return null;
-
-  const [title, setTitle] = useState(file.title);
-  const [description, setDescription] = useState(file.description);
-  const [keywords, setKeywords] = useState<string[]>(file.keywords || []);
+  const [title, setTitle] = useState(file?.title || '');
+  const [description, setDescription] = useState(file?.description || '');
+  const [keywords, setKeywords] = useState<string[]>(file?.keywords || []);
   const [newTagInput, setNewTagInput] = useState('');
-  const [adobeCat, setAdobeCat] = useState<number>(file.adobeCategory || 8);
-  const [shutterstockCat1, setShutterstockCat1] = useState(file.shutterstockCategory1 || 'Vectors');
-  const [shutterstockCat2, setShutterstockCat2] = useState(file.shutterstockCategory2 || 'Arts');
-  const [isIllustration, setIsIllustration] = useState(file.isIllustration || false);
-  const [isEditorial, setIsEditorial] = useState(file.isEditorial || false);
-  const [isMature, setIsMature] = useState(file.isMature || false);
-  const [releases, setReleases] = useState(file.releases || '');
+  const [adobeCat, setAdobeCat] = useState<number>(file?.adobeCategory || 8);
+  const [shutterstockCat1, setShutterstockCat1] = useState(file?.shutterstockCategory1 || 'Vectors');
+  const [shutterstockCat2, setShutterstockCat2] = useState(file?.shutterstockCategory2 || 'Arts');
+  const [isIllustration, setIsIllustration] = useState(file?.isIllustration || false);
+  const [isEditorial, setIsEditorial] = useState(file?.isEditorial || false);
+  const [isMature, setIsMature] = useState(file?.isMature || false);
+  const [releases, setReleases] = useState(file?.releases || '');
   const [copiedNotification, setCopiedNotification] = useState(false);
 
   // Synchronize state when selected file changes
   useEffect(() => {
+    if (!file) return;
     setTitle(file.title);
     setDescription(file.description);
     setKeywords(file.keywords || []);
@@ -73,6 +72,8 @@ export const EditDrawer: React.FC<EditDrawerProps> = ({
     setIsMature(file.isMature || false);
     setReleases(file.releases || '');
   }, [file]);
+
+  if (!isOpen || !file) return null;
 
   const handleAddTag = () => {
     const trimmed = newTagInput.trim().replace(/,/g, '');
