@@ -262,14 +262,17 @@ export async function testAiKeyDirectly(
       } catch (err: any) {
         lastError = err;
         const errMsg = String(err?.message || '').toLowerCase();
-        // If it's a transient 503, 404, or 429, try next model candidate
+        // If it's a transient 503, 404, 429, timeout or network issue, try next model candidate
         if (
           errMsg.includes('503') ||
           errMsg.includes('unavailable') ||
           errMsg.includes('high demand') ||
           errMsg.includes('not found') ||
           errMsg.includes('404') ||
-          errMsg.includes('429')
+          errMsg.includes('429') ||
+          errMsg.includes('timeout') ||
+          errMsg.includes('failed to fetch') ||
+          errMsg.includes('network')
         ) {
           continue;
         }

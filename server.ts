@@ -57,6 +57,7 @@ function getGenAIClient(customKey?: string): { client: GoogleGenAI; keySnippet: 
   const client = new GoogleGenAI({
     apiKey: key,
     httpOptions: {
+      timeout: 60000,
       headers: {
         'User-Agent': 'aistudio-build',
       },
@@ -255,6 +256,16 @@ function formatProviderErrorMessage(provider: string, err: any): string {
     if (lower.includes('model_not_found') || (lower.includes('404') && lower.includes('models/'))) {
       return 'Selected Gemini model not found. Switching to Gemini Flash.';
     }
+    if (
+      lower.includes('timeout') ||
+      lower.includes('fetch failed') ||
+      lower.includes('headerstimeouterror') ||
+      lower.includes('econnreset') ||
+      lower.includes('etimedout') ||
+      lower.includes('und_err')
+    ) {
+      return 'Connection timed out or network error. Please verify your connection or try again.';
+    }
   } else if (provider === 'openai') {
     if (lower.includes('401') || lower.includes('invalid_api_key')) {
       return 'Invalid OpenAI API Key. OpenAI keys usually start with "sk-...". Check your OpenAI platform settings.';
@@ -342,7 +353,7 @@ app.post('/api/test-key', async (req, res) => {
         } catch (err: any) {
           lastErr = err;
           console.error(`[Test Key Error] model: ${curModel}, err:`, err);
-          const errStr = (err?.message || String(err)).toLowerCase();
+          const errStr = (err?.message || err?.cause?.message || String(err)).toLowerCase();
           if (
             errStr.includes('503') ||
             errStr.includes('unavailable') ||
@@ -350,7 +361,13 @@ app.post('/api/test-key', async (req, res) => {
             errStr.includes('404') ||
             errStr.includes('not found') ||
             errStr.includes('429') ||
-            errStr.includes('resource_exhausted')
+            errStr.includes('resource_exhausted') ||
+            errStr.includes('timeout') ||
+            errStr.includes('fetch failed') ||
+            errStr.includes('econnreset') ||
+            errStr.includes('und_err') ||
+            errStr.includes('headerstimeout') ||
+            errStr.includes('headers timeout')
           ) {
             continue;
           }
@@ -600,7 +617,7 @@ Generate premium microstock SEO metadata as valid JSON.`;
             break;
           } catch (err: any) {
             lastError = err;
-            const errStr = (err?.message || String(err)).toLowerCase();
+            const errStr = (err?.message || err?.cause?.message || String(err)).toLowerCase();
 
             attempts++;
 
@@ -608,8 +625,20 @@ Generate premium microstock SEO metadata as valid JSON.`;
               activeKeyIndex = (activeKeyIndex + 1) % totalKeys;
             }
 
-            // If it's a 503 or 404 or 429, retry after slight delay or switch model
-            if (errStr.includes('503') || errStr.includes('unavailable') || errStr.includes('high demand') || errStr.includes('404') || errStr.includes('not found')) {
+            // If it's a 503, 404, 429, timeout or fetch error, retry after slight delay or switch model
+            if (
+              errStr.includes('503') ||
+              errStr.includes('unavailable') ||
+              errStr.includes('high demand') ||
+              errStr.includes('404') ||
+              errStr.includes('not found') ||
+              errStr.includes('timeout') ||
+              errStr.includes('fetch failed') ||
+              errStr.includes('headers timeout') ||
+              errStr.includes('headerstimeout') ||
+              errStr.includes('econnreset') ||
+              errStr.includes('und_err')
+            ) {
               break; // break to next model in candidateModels
             }
 
