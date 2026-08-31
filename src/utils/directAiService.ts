@@ -425,7 +425,10 @@ export async function generateGeminiMetadataDirectly(options: {
   }
   cleanBase64 = cleanBase64.replace(/[\r\n\s]/g, '');
 
-  if (!cleanBase64) {
+  const isVector = /\.(eps|ai|svg|pdf|cdr|ps)$/i.test(filename || '') || (mimeType && mimeType.includes('svg'));
+  const hasImage = cleanBase64.length > 50;
+
+  if (!hasImage && !isVector) {
     throw new Error('Missing image data for AI processing.');
   }
 
@@ -434,7 +437,6 @@ export async function generateGeminiMetadataDirectly(options: {
   const targetKwCount = Math.max(25, Math.min(49, keywordCount || 49));
   const safeMime = mimeType?.startsWith('image/') ? mimeType.split(';')[0].trim() : 'image/jpeg';
 
-  const isVector = /\.(eps|ai|svg|pdf|cdr|ps)$/i.test(filename || '') || (mimeType && mimeType.includes('svg'));
   const cleanSubject = filename
     ? filename
         .replace(/\.[^/.]+$/, '')
@@ -448,7 +450,7 @@ export async function generateGeminiMetadataDirectly(options: {
 Analyze this visual asset (photo, texture, vector, 3D render, or graphic) in extreme visual detail and generate high-converting microstock SEO metadata as valid JSON.
 
 DEEP VISUAL ANALYSIS CRITERIA:
-1. Subject & Core Theme: Identify main object, background scenery, visual action, lighting, mood, color palette, and textures.
+1. Subject & Core Theme: Identify main object (${isVector && cleanSubject ? `specifically focusing on "${cleanSubject}"` : 'main subjects'}), background scenery, visual action, lighting, mood, color palette, and textures.
 2. Commercial Use Cases: Identify intended applications (web banner, poster, packaging, interior wallpaper, marketing background).
 
 STRICT MICROSTOCK REQUIREMENTS:
@@ -477,23 +479,24 @@ JSON Response Format:
   for (const curModel of candidateModels) {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${curModel}:generateContent?key=${encodeURIComponent(apiKey.trim())}`;
     try {
+      const parts: any[] = [];
+      if (hasImage) {
+        parts.push({
+          inlineData: {
+            mimeType: safeMime,
+            data: cleanBase64,
+          },
+        });
+      }
+      parts.push({ text: promptText });
+
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [
             {
-              parts: [
-                {
-                  inlineData: {
-                    mimeType: safeMime,
-                    data: cleanBase64,
-                  },
-                },
-                {
-                  text: promptText,
-                },
-              ],
+              parts,
             },
           ],
           generationConfig: {

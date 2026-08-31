@@ -132,7 +132,7 @@ export default function App() {
           );
         }
 
-        if (!base64Data) {
+        if (!base64Data && file.formatCategory !== 'vector') {
           throw new Error('Could not read image base64 data for AI processing.');
         }
 

@@ -1,5 +1,8 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
+import os from 'os';
+import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Type } from '@google/genai';
 
@@ -480,6 +483,117 @@ app.post('/api/test-key', async (req, res) => {
 });
 
 /**
+ * High-Fidelity Vector Preview & AI Visual Renderer (Ghostscript & ImageMagick)
+ * Converts EPS, AI, PS, PDF vector files directly into color-accurate, high-resolution JPEG images.
+ */
+app.post('/api/render-vector', async (req, res) => {
+  let inPath = '';
+  let outPath = '';
+
+  try {
+    const { fileData, filename } = req.body;
+    if (!fileData) {
+      return res.status(400).json({ success: false, error: 'Missing fileData' });
+    }
+
+    let cleanBase64 = String(fileData).trim();
+    if (cleanBase64.includes(',')) {
+      cleanBase64 = cleanBase64.split(',')[1].trim();
+    }
+    cleanBase64 = cleanBase64.replace(/[\r\n\s]/g, '');
+
+    const fileBuffer = Buffer.from(cleanBase64, 'base64');
+    if (fileBuffer.length === 0) {
+      return res.status(400).json({ success: false, error: 'Empty file buffer' });
+    }
+
+    const tmpDir = os.tmpdir();
+    const randId = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    const ext = (filename && path.extname(filename)) ? path.extname(filename) : '.eps';
+    inPath = path.join(tmpDir, `vector_in_${randId}${ext}`);
+    outPath = path.join(tmpDir, `vector_out_${randId}.jpg`);
+
+    fs.writeFileSync(inPath, fileBuffer);
+
+    let renderSuccess = false;
+
+    // 1. Try Ghostscript with -dEPSCrop (perfect for EPS/PS vector artboards)
+    try {
+      execSync(
+        `gs -dSAFER -dBATCH -dNOPAUSE -dEPSCrop -sDEVICE=jpeg -dJPEGQ=92 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${inPath}"`,
+        { timeout: 15000, stdio: 'pipe' }
+      );
+      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 300) {
+        renderSuccess = true;
+      }
+    } catch (gsCropErr) {
+      // Fallback
+    }
+
+    // 2. Try Ghostscript standard render (without EPSCrop)
+    if (!renderSuccess) {
+      try {
+        execSync(
+          `gs -dSAFER -dBATCH -dNOPAUSE -sDEVICE=jpeg -dJPEGQ=92 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${inPath}"`,
+          { timeout: 15000, stdio: 'pipe' }
+        );
+        if (fs.existsSync(outPath) && fs.statSync(outPath).size > 300) {
+          renderSuccess = true;
+        }
+      } catch (gsStdErr) {
+        // Fallback
+      }
+    }
+
+    // 3. Try ImageMagick convert
+    if (!renderSuccess) {
+      try {
+        execSync(
+          `convert -density 150 "${inPath}" -background white -flatten "${outPath}"`,
+          { timeout: 15000, stdio: 'pipe' }
+        );
+        if (fs.existsSync(outPath) && fs.statSync(outPath).size > 300) {
+          renderSuccess = true;
+        }
+      } catch (convertErr) {
+        // Failed
+      }
+    }
+
+    if (!renderSuccess || !fs.existsSync(outPath)) {
+      return res.status(422).json({
+        success: false,
+        error: 'Vector rendering engine could not rasterize this PostScript file.',
+      });
+    }
+
+    const outBuf = fs.readFileSync(outPath);
+    const outBase64 = outBuf.toString('base64');
+    const previewUrl = `data:image/jpeg;base64,${outBase64}`;
+
+    return res.json({
+      success: true,
+      previewUrl,
+      base64Data: outBase64,
+      mimeTypeForAi: 'image/jpeg',
+    });
+  } catch (err: any) {
+    console.error('Vector rendering endpoint error:', err);
+    return res.status(500).json({
+      success: false,
+      error: err?.message || 'Failed to render vector preview',
+    });
+  } finally {
+    try {
+      if (inPath && fs.existsSync(inPath)) fs.unlinkSync(inPath);
+      if (outPath && fs.existsSync(outPath)) fs.unlinkSync(outPath);
+    } catch (cleanErr) {
+      // Cleanup
+    }
+  }
+});
+
+/**
  * Multi-Provider AI Metadata Generation
  */
 app.post('/api/generate-metadata', async (req, res) => {
@@ -502,10 +616,13 @@ app.post('/api/generate-metadata', async (req, res) => {
     }
     cleanBase64 = cleanBase64.replace(/[\r\n\s]/g, '');
 
-    if (!cleanBase64) {
+    const isVector = /\.(eps|ai|svg|pdf|cdr|ps)$/i.test(filename || '') || (mimeType && mimeType.includes('svg'));
+    const hasImage = cleanBase64.length > 50;
+
+    if (!hasImage && !isVector) {
       return res.status(400).json({
         success: false,
-        error: 'Missing base64Data image payload',
+        error: 'Missing base64Data image payload for visual analysis',
       });
     }
 
@@ -520,34 +637,6 @@ app.post('/api/generate-metadata', async (req, res) => {
 
     const targetKwCount = Math.max(25, Math.min(49, keywordCount || 49));
 
-    const systemInstruction = `You are a world-class Stock Media SEO Specialist & Keywording Expert for Adobe Stock, Shutterstock, Freepik, Getty Images, and Vecteezy.
-Analyze the provided visual asset (photo, texture, vector illustration, 3D render, or graphic) in extreme visual detail and generate high-converting, strictly compliant commercial SEO metadata in valid JSON format.
-
-DEEP VISUAL ANALYSIS REQUIREMENTS:
-1. Subject & Concept: Identify the primary subject, secondary objects, core themes, emotions, and practical concepts (e.g. business, luxury, wellness, technology, nature, celebration).
-2. Composition, Style & Technique: Note the visual perspective (flat lay, close up macro, aerial, portrait, pattern, isometric), rendering style (fluid art, watercolor, 3D render, realistic photography, vector art), lighting, textures (marble, grain, foil, bokeh, rough, polished), and dominant color palette (e.g. navy blue, turquoise, gold, monochrome).
-3. Commercial & Industry Intent: Identify potential buyer use cases (website hero backdrop, social media banner, packaging design, interior wallpaper, advertising poster, editorial theme).
-
-STRICT MICROSTOCK RULES:
-- Title: Exactly ONE clear, highly descriptive, commercial sentence (60-90 characters). Packed with the top search keywords. Strictly NEVER include commas in the title (Adobe Stock forbids commas). No quotation marks.
-- Description: 1-2 clean sentences describing the asset's visual elements, background atmosphere, and design value.
-- Keywords: Provide EXACTLY ${targetKwCount} unique, high-ranking, buyer-focused keywords.
-  * Sort strictly in descending order of relevance (Tags #1 to #10 must be the most exact, high-traffic search terms, as Adobe Stock search algorithms weigh the first 10 keywords most heavily).
-  * Use concise single words and 2-word phrases only.
-  * STRICTLY lowercase, no commas inside tags, no duplicates, no punctuation.
-  * NO trademarked brand names (no Apple, iPhone, Nike, Adobe, Photoshop, Midjourney, etc.).
-  * NO negative/spam tags (no "nobody", "no people", "no person", "white background" unless truly isolated on pure white).
-- Category: Accurate primary category (e.g., Graphic Resources, Backgrounds/Textures, Abstract, Architecture, Business, Food, Lifestyle, People, Plants, Science, Technology, Travel).
-
-JSON Response Schema:
-{
-  "title": "Luxury Deep Blue Marble Texture with Flowing Veins and Quartz Surface",
-  "description": "High resolution abstract blue marble stone texture with natural veins and elegant crystal surface for luxury background design.",
-  "keywords": ["blue marble", "marble texture", "abstract background", ...],
-  "category_guess": "Graphic Resources"
-}`;
-
-    const isVector = /\.(eps|ai|svg|pdf|cdr|ps)$/i.test(filename || '') || (mimeType && mimeType.includes('svg'));
     const cleanSubject = filename
       ? filename
           .replace(/\.[^/.]+$/, '')
@@ -557,12 +646,38 @@ JSON Response Schema:
           .trim()
       : '';
 
+    const systemInstruction = `You are a world-class Stock Media SEO Specialist & Keywording Expert for Adobe Stock, Shutterstock, Freepik, Getty Images, and Vecteezy.
+Analyze the provided visual asset (photo, texture, vector illustration, icon set, 3D render, or graphic) in extreme visual detail and generate high-converting, strictly compliant commercial SEO metadata in valid JSON format.
+
+DEEP ANALYSIS REQUIREMENTS:
+1. Subject & Concept: Identify the primary subject (${isVector && cleanSubject ? `specifically focusing on "${cleanSubject}"` : 'main objects'}), secondary elements, core themes, emotions, and practical concepts (e.g. transportation, business, luxury, technology, nature, icons, symbols).
+2. Composition, Style & Technique: Note the visual perspective (flat lay, close up, isometric, pattern, icon collection), rendering style (${isVector ? 'scalable vector art, outline / filled icons, isolated vector illustration' : 'photography, 3d render, illustration'}), and color palette.
+3. Commercial & Industry Intent: Identify potential buyer use cases (app UI design, website graphics, print templates, advertising, branding).
+
+STRICT MICROSTOCK RULES:
+- Title: Exactly ONE clear, highly descriptive, commercial sentence (60-90 characters). Packed with the top search keywords. Strictly NEVER include commas in the title (Adobe Stock forbids commas). No quotation marks.
+- Description: 1-2 clean sentences describing the asset's visual elements, background atmosphere, and design value.
+- Keywords: Provide EXACTLY ${targetKwCount} unique, high-ranking, buyer-focused keywords.
+  * Sort strictly in descending order of relevance (Tags #1 to #10 must be the most exact, high-traffic search terms for ${cleanSubject || 'the asset'}, as Adobe Stock search algorithms weigh the first 10 keywords most heavily).
+  * Use concise single words and 2-word phrases only.
+  * STRICTLY lowercase, no commas inside tags, no duplicates, no punctuation.
+  * NO trademarked brand names (no Apple, iPhone, Nike, Adobe, Ferrari, etc.).
+  * NO negative/spam tags (no "nobody", "no people", "no person", "white background" unless truly isolated on pure white).
+- Category: Accurate primary category (e.g., Graphic Resources, Transportation, Backgrounds/Textures, Abstract, Architecture, Business, Technology, Food, Lifestyle).
+
+JSON Response Schema:
+{
+  "title": "Clear descriptive commercial title without any commas",
+  "description": "Commercial description describing visual elements and practical microstock applications.",
+  "keywords": ["tag1", "tag2", ...],
+  "category_guess": "Graphic Resources"
+}`;
+
     const promptText = `Filename: "${filename || 'stock_media'}".
-${isVector ? `Asset Type: Scalable Vector Graphic / Icon Set Artwork.\nSpecific Subject Theme: "${cleanSubject}". Generate exact, high-accuracy metadata reflecting the vector icons/artwork of "${cleanSubject}".` : ''}
+${isVector ? `Asset Type: Professional Scalable Vector Graphic / Artwork Asset.\nCore Subject Theme: "${cleanSubject}". Generate exact, high-accuracy metadata directly representing "${cleanSubject}".` : ''}
 Target Keyword Count: Exactly ${targetKwCount} keywords.
 ${customPromptHint ? `Custom Guidance: ${customPromptHint}` : ''}
 Generate premium microstock SEO metadata as valid JSON.`;
-
 
     let resultText = '';
 
@@ -601,20 +716,21 @@ Generate premium microstock SEO metadata as valid JSON.`;
               `[Gemini AI] Processing ${filename} using model ${curModel} (${keySnippet})...`
             );
 
+            const geminiParts: any[] = [];
+            if (hasImage) {
+              geminiParts.push({
+                inlineData: {
+                  mimeType: safeMimeType,
+                  data: cleanBase64,
+                },
+              });
+            }
+            geminiParts.push({ text: promptText });
+
             const response = await ai.models.generateContent({
               model: curModel,
               contents: {
-                parts: [
-                  {
-                    inlineData: {
-                      mimeType: safeMimeType,
-                      data: cleanBase64,
-                    },
-                  },
-                  {
-                    text: promptText,
-                  },
-                ],
+                parts: geminiParts,
               },
               config: {
                 systemInstruction,
@@ -652,7 +768,7 @@ Generate premium microstock SEO metadata as valid JSON.`;
                 console.log(`[Gemini AI] Trying fallback text generation for ${filename}...`);
                 const textFallbackRes = await ai.models.generateContent({
                   model: curModel,
-                  contents: `${promptText}\nNote: This is a professional scalable vector graphic / artwork asset named "${filename}". Please perform deep visual and conceptual microstock analysis based on the vector metadata and filename to generate complete commercial JSON metadata.`,
+                  contents: `${promptText}\nNote: This is a professional scalable vector graphic / artwork asset named "${filename}". Please perform deep microstock SEO analysis based on the vector subject "${cleanSubject}" to generate complete commercial JSON metadata.`,
                   config: {
                     systemInstruction,
                     temperature: 0.2,
@@ -691,20 +807,21 @@ Generate premium microstock SEO metadata as valid JSON.`;
               console.warn('[Gemini AI] Custom API key failed with auth error. Trying seamless server built-in key fallback...');
               try {
                 const { client: fallbackAi } = getGenAIClient();
+                const fallbackParts: any[] = [];
+                if (hasImage) {
+                  fallbackParts.push({
+                    inlineData: {
+                      mimeType: safeMimeType,
+                      data: cleanBase64,
+                    },
+                  });
+                }
+                fallbackParts.push({ text: promptText });
+
                 const fallbackResponse = await fallbackAi.models.generateContent({
                   model: curModel,
                   contents: {
-                    parts: [
-                      {
-                        inlineData: {
-                          mimeType: safeMimeType,
-                          data: cleanBase64,
-                        },
-                      },
-                      {
-                        text: promptText,
-                      },
-                    ],
+                    parts: fallbackParts,
                   },
                   config: {
                     systemInstruction,
@@ -751,6 +868,17 @@ Generate premium microstock SEO metadata as valid JSON.`;
 
       console.log(`[OpenAI] Processing ${filename} using ${selectedModel}...`);
 
+      const userContent: any[] = [{ type: 'text', text: promptText }];
+      if (hasImage) {
+        userContent.push({
+          type: 'image_url',
+          image_url: {
+            url: `data:${safeMimeType};base64,${cleanBase64}`,
+            detail: 'high',
+          },
+        });
+      }
+
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
@@ -763,16 +891,7 @@ Generate premium microstock SEO metadata as valid JSON.`;
             { role: 'system', content: systemInstruction },
             {
               role: 'user',
-              content: [
-                { type: 'text', text: promptText },
-                {
-                  type: 'image_url',
-                  image_url: {
-                    url: `data:${safeMimeType};base64,${base64Data}`,
-                    detail: 'low',
-                  },
-                },
-              ],
+              content: userContent,
             },
           ],
           response_format: { type: 'json_object' },
@@ -802,6 +921,22 @@ Generate premium microstock SEO metadata as valid JSON.`;
 
       console.log(`[Claude AI] Processing ${filename} using ${selectedModel}...`);
 
+      const claudeContent: any[] = [];
+      if (hasImage) {
+        claudeContent.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: safeMimeType === 'image/png' ? 'image/png' : 'image/jpeg',
+            data: cleanBase64,
+          },
+        });
+      }
+      claudeContent.push({
+        type: 'text',
+        text: `${promptText}\n\nIMPORTANT: Return ONLY a valid JSON object. Do not include introductory or markdown prose.`,
+      });
+
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
@@ -816,20 +951,7 @@ Generate premium microstock SEO metadata as valid JSON.`;
           messages: [
             {
               role: 'user',
-              content: [
-                {
-                  type: 'image',
-                  source: {
-                    type: 'base64',
-                    media_type: safeMimeType === 'image/png' ? 'image/png' : 'image/jpeg',
-                    data: base64Data,
-                  },
-                },
-                {
-                  type: 'text',
-                  text: `${promptText}\n\nIMPORTANT: Return ONLY a valid JSON object. Do not include introductory or markdown prose.`,
-                },
-              ],
+              content: claudeContent,
             },
           ],
         }),
@@ -858,22 +980,23 @@ Generate premium microstock SEO metadata as valid JSON.`;
 
       console.log(`[${provider.toUpperCase()}] Processing ${filename} using ${selectedModel}...`);
 
-      // Try vision request first, fallback to text context if image_url isn't supported
       let requestBody: any = {
         model: selectedModel,
         messages: [
           { role: 'system', content: systemInstruction },
           {
             role: 'user',
-            content: [
-              { type: 'text', text: promptText },
-              {
-                type: 'image_url',
-                image_url: {
-                  url: `data:${safeMimeType};base64,${base64Data}`,
-                },
-              },
-            ],
+            content: hasImage
+              ? [
+                  { type: 'text', text: promptText },
+                  {
+                    type: 'image_url',
+                    image_url: {
+                      url: `data:${safeMimeType};base64,${cleanBase64}`,
+                    },
+                  },
+                ]
+              : promptText,
           },
         ],
         response_format: { type: 'json_object' },
@@ -890,7 +1013,7 @@ Generate premium microstock SEO metadata as valid JSON.`;
       });
 
       // If provider rejects image_url (e.g. standard DeepSeek text-only model)
-      if (!response.ok && response.status === 400) {
+      if (!response.ok && response.status === 400 && hasImage) {
         console.warn(`[${provider.toUpperCase()}] Vision payload rejected, retrying with textual metadata prompt...`);
         requestBody = {
           model: selectedModel,

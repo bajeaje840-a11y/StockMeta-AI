@@ -427,6 +427,105 @@ export async function renderPdfBufferToCanvas(
 
 
 /**
+ * Parses ASCII EPSI hex preview (%%BeginPreview: <width> <height> <depth> <lines> ... %%EndPreview)
+ */
+export function parseEpsiHexPreview(psText: string): { previewUrl: string; base64Data: string; mimeTypeForAi: string } | null {
+  try {
+    const match = psText.match(/%%BeginPreview:\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)([\s\S]*?)%%EndPreview/i);
+    if (!match) return null;
+
+    const width = parseInt(match[1], 10);
+    const height = parseInt(match[2], 10);
+    const depth = parseInt(match[3], 10); // 1 for monochrome, 8 for grayscale
+    const rawHexLines = match[5];
+
+    if (width <= 0 || height <= 0 || (depth !== 1 && depth !== 8)) return null;
+
+    const hexStr = rawHexLines.replace(/[^0-9a-fA-F]/g, '');
+    if (hexStr.length < 16) return null;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    const imgData = ctx.createImageData(width, height);
+    const data = imgData.data;
+
+    if (depth === 1) {
+      const bytesPerRow = Math.ceil(width / 8);
+      let hexPos = 0;
+
+      for (let y = 0; y < height; y++) {
+        for (let byteIdx = 0; byteIdx < bytesPerRow; byteIdx++) {
+          if (hexPos + 1 >= hexStr.length) break;
+          const byteVal = parseInt(hexStr.substr(hexPos, 2), 16);
+          hexPos += 2;
+
+          for (let bit = 7; bit >= 0; bit--) {
+            const x = byteIdx * 8 + (7 - bit);
+            if (x < width) {
+              const pixelIdx = (y * width + x) * 4;
+              const isInk = (byteVal & (1 << bit)) === 0; // 0 = ink, 1 = white background
+              const colorVal = isInk ? 20 : 255;
+              data[pixelIdx] = colorVal;
+              data[pixelIdx + 1] = colorVal;
+              data[pixelIdx + 2] = colorVal;
+              data[pixelIdx + 3] = 255;
+            }
+          }
+        }
+      }
+    } else if (depth === 8) {
+      let hexPos = 0;
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          if (hexPos + 1 >= hexStr.length) break;
+          const gray = parseInt(hexStr.substr(hexPos, 2), 16);
+          hexPos += 2;
+          const pixelIdx = (y * width + x) * 4;
+          data[pixelIdx] = gray;
+          data[pixelIdx + 1] = gray;
+          data[pixelIdx + 2] = gray;
+          data[pixelIdx + 3] = 255;
+        }
+      }
+    }
+
+    ctx.putImageData(imgData, 0, 0);
+
+    // Render scaled onto crisp white canvas
+    const outCanvas = document.createElement('canvas');
+    const targetW = Math.max(width, 800);
+    const targetH = Math.round((height / width) * targetW);
+    outCanvas.width = targetW;
+    outCanvas.height = targetH;
+    const outCtx = outCanvas.getContext('2d');
+    if (!outCtx) return null;
+
+    outCtx.fillStyle = '#ffffff';
+    outCtx.fillRect(0, 0, targetW, targetH);
+    outCtx.imageSmoothingEnabled = true;
+    outCtx.imageSmoothingQuality = 'high';
+    outCtx.drawImage(canvas, 0, 0, targetW, targetH);
+
+    const jpegUrl = outCanvas.toDataURL('image/jpeg', 0.90);
+    const b64 = jpegUrl.split(',')[1];
+    if (b64 && b64.length > 50) {
+      return {
+        previewUrl: jpegUrl,
+        base64Data: b64,
+        mimeTypeForAi: 'image/jpeg',
+      };
+    }
+  } catch (e) {
+    console.warn('parseEpsiHexPreview exception:', e);
+  }
+  return null;
+}
+
+/**
  * Extracts TIFF or JPEG preview from standard Binary EPS header (magic 0xC5 0xD0 0xD3 0xC6)
  * Decodes TIFF data with UTIF.js for 100% pixel fidelity
  */
@@ -527,17 +626,21 @@ export async function extractTiffFromBinaryEps(
  */
 export async function extractEmbeddedXmpThumbnail(file: File): Promise<{ previewUrl: string; base64Data: string; mimeTypeForAi: string } | null> {
   try {
-    // Read up to 12MB of file text
-    const sliceSize = Math.min(file.size, 12 * 1024 * 1024);
+    // Read up to 16MB of file text
+    const sliceSize = Math.min(file.size, 16 * 1024 * 1024);
     const buffer = await file.slice(0, sliceSize).arrayBuffer();
     const textDecoder = new TextDecoder('latin1'); // latin1 never throws on binary PostScript
     const text = textDecoder.decode(buffer);
 
-    // 1. Match Adobe XMP GImg Thumbnail (<xmpGImg:image> or <xapGImg:image>)
-    const xmpImgMatch = text.match(/<(?:xmpGImg|xapGImg):image>([\s\S]*?)<\/(?:xmpGImg|xapGImg):image>/i);
+    // 1. Check EPSI Hex Preview
+    const epsi = parseEpsiHexPreview(text);
+    if (epsi) return epsi;
+
+    // 2. Match Adobe XMP GImg Thumbnail (<xmpGImg:image> or <xapGImg:image>)
+    const xmpImgMatch = text.match(/<(?:xmpGImg|xapGImg|photoshop):(?:image|Thumbnail)>([\s\S]*?)<\/(?:xmpGImg|xapGImg|photoshop):(?:image|Thumbnail)>/i);
     if (xmpImgMatch && xmpImgMatch[1]) {
       const cleanB64 = xmpImgMatch[1].replace(/[\r\n\s]/g, '');
-      if (cleanB64.length > 200) {
+      if (cleanB64.length > 100) {
         // Test as JPEG
         const jpegCandidate = await validateAndRasterizeImage(`data:image/jpeg;base64,${cleanB64}`, 1200);
         if (jpegCandidate) {
@@ -559,8 +662,8 @@ export async function extractEmbeddedXmpThumbnail(file: File): Promise<{ preview
       }
     }
 
-    // 2. Match Photoshop / Illustrator Base64 thumbnail in comments
-    const rawB64Match = text.match(/%%BeginPhotoshop:[\s\S]*?([A-Za-z0-9+/=]{400,})[\s\S]*?%%EndPhotoshop/i);
+    // 3. Match Photoshop / Illustrator Base64 thumbnail in comments
+    const rawB64Match = text.match(/%%BeginPhotoshop:[\s\S]*?([A-Za-z0-9+/=]{300,})[\s\S]*?%%EndPhotoshop/i);
     if (rawB64Match && rawB64Match[1]) {
       const cleanB64 = rawB64Match[1].replace(/[\r\n\s]/g, '');
       const tested = await validateAndRasterizeImage(`data:image/jpeg;base64,${cleanB64}`, 1200);
@@ -588,7 +691,7 @@ export async function extractEmbeddedStreamFromVector(file: File): Promise<{ pre
 
     // 1. Search for PDF Stream (%PDF-1.) inside AI or EPS
     const pdfMagic = [0x25, 0x50, 0x44, 0x46, 0x2D]; // %PDF-
-    for (let i = 0; i < Math.min(bytes.length - 100, 3 * 1024 * 1024); i++) {
+    for (let i = 0; i < Math.min(bytes.length - 100, 4 * 1024 * 1024); i++) {
       if (
         bytes[i] === pdfMagic[0] &&
         bytes[i + 1] === pdfMagic[1] &&
@@ -663,7 +766,7 @@ export async function extractEmbeddedImageFromVector(file: File): Promise<{ prev
   const tiffResult = await extractTiffFromBinaryEps(file);
   if (tiffResult) return tiffResult;
 
-  // 2. XMP Packet thumbnail (<xmpGImg:image>)
+  // 2. XMP Packet thumbnail or EPSI hex preview (<xmpGImg:image> / %%BeginPreview)
   const xmpResult = await extractEmbeddedXmpThumbnail(file);
   if (xmpResult) return xmpResult;
 
@@ -675,8 +778,8 @@ export async function extractEmbeddedImageFromVector(file: File): Promise<{ prev
 }
 
 /**
- * Creates a clean, professional vector representation card when an EPS has no embedded raster preview.
- * CRITICAL: NEVER draws random zig-zag lines! Draws a clean, high-contrast icon set showcase artboard.
+ * Creates a clean, professional vector representation badge when an EPS has no embedded raster preview.
+ * CRITICAL: NEVER draws random lines or fake objects. Sets base64Data to empty so AI uses pure text understanding.
  */
 export async function renderEpsCanvasPreview(file: File): Promise<{ previewUrl: string; base64Data: string; mimeTypeForAi: string }> {
   let psText = '';
@@ -688,15 +791,8 @@ export async function renderEpsCanvasPreview(file: File): Promise<{ previewUrl: 
     console.warn('Could not decode EPS text:', e);
   }
 
-  const ext = getFileExtension(file.name).toUpperCase() || 'VECTOR';
+  const ext = getFileExtension(file.name).toUpperCase() || 'EPS';
   const cleanSubject = cleanVectorSubject(file.name);
-
-  // Extract EPS Comments
-  let title = cleanSubject;
-  const titleMatch = psText.match(/%%Title:\s*(.+)/i);
-  if (titleMatch && titleMatch[1] && !titleMatch[1].toLowerCase().includes('untitled')) {
-    title = titleMatch[1].trim();
-  }
 
   let creator = '';
   const creatorMatch = psText.match(/%%Creator:\s*(.+)/i);
@@ -704,133 +800,105 @@ export async function renderEpsCanvasPreview(file: File): Promise<{ previewUrl: 
     creator = creatorMatch[1].trim();
   }
 
-  // Create 1200x900 high-res clean preview canvas
+  // Create clean 800x600 preview artboard card
   const canvas = document.createElement('canvas');
-  canvas.width = 1200;
-  canvas.height = 900;
+  canvas.width = 800;
+  canvas.height = 600;
   const ctx = canvas.getContext('2d');
 
   if (ctx) {
     // Pure Clean Artboard Backdrop
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, 1200, 900);
-
-    // Subtle border
-    ctx.strokeStyle = '#e2e8f0';
-    ctx.lineWidth = 4;
-    ctx.strokeRect(20, 20, 1160, 860);
-
-    // Top Header Banner
     ctx.fillStyle = '#f8fafc';
-    ctx.fillRect(24, 24, 1152, 110);
-    ctx.strokeStyle = '#e2e8f0';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(24, 24, 1152, 110);
+    ctx.fillRect(0, 0, 800, 600);
 
-    // Format Badge
+    // Clean subtle border
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(16, 16, 768, 568);
+
+    // Vector Emblem Box
     ctx.fillStyle = '#4f46e5';
     ctx.beginPath();
-    ctx.roundRect(50, 52, 130, 44, 8);
+    ctx.roundRect(330, 160, 140, 140, 24);
     ctx.fill();
+
+    // Emblem Text
     ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 18px system-ui, -apple-system, sans-serif';
+    ctx.font = 'bold 36px system-ui, -apple-system, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(`${ext} VECTOR`, 115, 74);
+    ctx.fillText(ext, 400, 230);
 
-    // File name & Subject in Header
+    // File name & Subject in Center
     ctx.fillStyle = '#0f172a';
     ctx.font = 'bold 24px system-ui, -apple-system, sans-serif';
-    ctx.textAlign = 'left';
-    ctx.fillText(cleanSubject, 205, 64);
+    ctx.fillText(cleanSubject, 400, 360);
 
     ctx.font = '15px system-ui, -apple-system, sans-serif';
     ctx.fillStyle = '#64748b';
-    ctx.fillText(`${file.name} • ${bytesToSize(file.size)}${creator ? ` • Created with ${creator}` : ''}`, 205, 96);
+    ctx.fillText(`${file.name} • ${bytesToSize(file.size)}${creator ? ` • ${creator}` : ''}`, 400, 400);
 
-    // Center Showcase Stage
-    const stageX = 60;
-    const stageY = 160;
-    const stageW = 1080;
-    const stageH = 580;
-
-    ctx.fillStyle = '#fcfdfe';
-    ctx.strokeStyle = '#cbd5e1';
-    ctx.lineWidth = 2;
+    // Badge pill
+    ctx.fillStyle = '#eef2ff';
     ctx.beginPath();
-    ctx.roundRect(stageX, stageY, stageW, stageH, 16);
+    ctx.roundRect(280, 440, 240, 38, 19);
     ctx.fill();
+    ctx.strokeStyle = '#c7d2fe';
+    ctx.lineWidth = 1;
     ctx.stroke();
 
-    // Draw clean 4x3 Icon Set Grid representation
-    const gridCols = 4;
-    const gridRows = 3;
-    const cellW = (stageW - 80) / gridCols;
-    const cellH = (stageH - 80) / gridRows;
-
-    for (let r = 0; r < gridRows; r++) {
-      for (let c = 0; c < gridCols; c++) {
-        const cx = stageX + 40 + c * cellW;
-        const cy = stageY + 40 + r * cellH;
-
-        // Cell container
-        ctx.fillStyle = '#ffffff';
-        ctx.strokeStyle = '#e2e8f0';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.roundRect(cx + 10, cy + 10, cellW - 20, cellH - 20, 10);
-        ctx.fill();
-        ctx.stroke();
-
-        // Cell icon outline placeholder
-        const iconCenterX = cx + cellW / 2;
-        const iconCenterY = cy + cellH / 2;
-
-        ctx.strokeStyle = '#334155';
-        ctx.lineWidth = 3;
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-
-        // Vehicle / object icon shape
-        ctx.beginPath();
-        ctx.roundRect(iconCenterX - 36, iconCenterY - 14, 72, 28, 6);
-        ctx.stroke();
-
-        // Wheels or base
-        ctx.beginPath();
-        ctx.arc(iconCenterX - 20, iconCenterY + 16, 7, 0, Math.PI * 2);
-        ctx.arc(iconCenterX + 20, iconCenterY + 16, 7, 0, Math.PI * 2);
-        ctx.fillStyle = '#1e293b';
-        ctx.fill();
-
-        // Window / detail
-        ctx.beginPath();
-        ctx.moveTo(iconCenterX - 22, iconCenterY - 14);
-        ctx.lineTo(iconCenterX - 10, iconCenterY - 26);
-        ctx.lineTo(iconCenterX + 12, iconCenterY - 26);
-        ctx.lineTo(iconCenterX + 22, iconCenterY - 14);
-        ctx.stroke();
-      }
-    }
-
-    // Bottom Footer Information
-    ctx.fillStyle = '#1e293b';
-    ctx.font = 'bold 18px system-ui, -apple-system, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(`Scalable Vector Icon Collection: ${cleanSubject}`, 600, 790);
-
-    ctx.font = '14px system-ui, -apple-system, sans-serif';
-    ctx.fillStyle = '#64748b';
-    ctx.fillText(`Professional Resolution-Independent Vector Artwork Asset (.${ext.toLowerCase()})`, 600, 825);
+    ctx.fillStyle = '#4338ca';
+    ctx.font = 'bold 14px system-ui, -apple-system, sans-serif';
+    ctx.fillText('Scalable Vector Graphic', 400, 459);
   }
 
-  const jpegUrl = canvas.toDataURL('image/jpeg', 0.90);
+  const jpegUrl = canvas.toDataURL('image/jpeg', 0.85);
   return {
     previewUrl: jpegUrl,
-    base64Data: jpegUrl.split(',')[1],
+    base64Data: '', // Empty base64 so AI performs 100% accurate text analysis!
     mimeTypeForAi: 'image/jpeg',
   };
+}
+
+/**
+ * Calls server-side Ghostscript engine (/api/render-vector) to render genuine PostScript artwork
+ */
+export async function renderVectorViaServer(file: File): Promise<{ previewUrl: string; base64Data: string; mimeTypeForAi: string } | null> {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
+
+    // Fast chunked binary to base64 conversion
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunkSize)));
+    }
+    const base64Data = btoa(binary);
+
+    const response = await fetch('/api/render-vector', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filename: file.name,
+        fileData: base64Data,
+      }),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      if (data.success && data.previewUrl && data.base64Data) {
+        return {
+          previewUrl: data.previewUrl,
+          base64Data: data.base64Data,
+          mimeTypeForAi: data.mimeTypeForAi || 'image/jpeg',
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('Server-side vector rendering unavailable or failed:', err);
+  }
+  return null;
 }
 
 /**
@@ -876,12 +944,19 @@ export async function prepareFileForAi(file: File): Promise<{
   // 3. EPS, AI, PS, PDF VECTOR HANDLING
   if (['eps', 'ai', 'ps', 'pdf', 'cdr'].includes(ext) || category === 'vector' || category === 'pdf') {
     try {
-      // First attempt: extract embedded JPEG/PNG/TIFF/PDF preview image from EPS/AI/PDF
+      // 1st Priority: Server-Side Ghostscript Vector Renderer (renders 100% genuine PostScript artwork)
+      const serverRendered = await renderVectorViaServer(file);
+      if (serverRendered && serverRendered.base64Data) {
+        return serverRendered;
+      }
+
+      // 2nd Priority: Extract embedded JPEG/PNG/TIFF/PDF preview image from EPS/AI/PDF
       const extracted = await extractEmbeddedImageFromVector(file);
       if (extracted && extracted.base64Data) {
         return extracted;
       }
-      // Second attempt: render vector artboard showcase canvas preview
+
+      // 3rd Priority: Clean vector artboard showcase canvas preview
       return await renderEpsCanvasPreview(file);
     } catch (e) {
       console.warn('Error extracting/rendering vector preview:', e);
