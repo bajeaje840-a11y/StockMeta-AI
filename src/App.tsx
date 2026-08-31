@@ -6,6 +6,7 @@ import { QueueTable } from './components/QueueTable';
 import { EditDrawer } from './components/EditDrawer';
 import { BlocklistModal } from './components/BlocklistModal';
 import { AiKeySettingsModal } from './components/AiKeySettingsModal';
+import { PinProtectionModal } from './components/PinProtectionModal';
 import {
   AiConfig,
   ExportSettings,
@@ -20,6 +21,7 @@ import { downloadAllPlatformsZip, downloadCSV, generateCSV } from './utils/csvEx
 import { generateGeminiMetadataDirectly, parseApiErrorMessage } from './utils/directAiService';
 
 export default function App() {
+  const [isUnlocked, setIsUnlocked] = useState<boolean>(false);
   const [files, setFiles] = useState<StockFile[]>([]);
   const [queueState, setQueueState] = useState<'idle' | 'running' | 'paused' | 'cancelled'>('idle');
   const [concurrency, setConcurrency] = useState<number>(3);
@@ -673,6 +675,11 @@ export default function App() {
           setExportSettings((prev) => ({ ...prev, applyBlocklist: val }))
         }
       />
+
+      {/* 5-Digit PIN Protection Lock Screen (14418 - Developed by Woalid) */}
+      {!isUnlocked && (
+        <PinProtectionModal onUnlock={() => setIsUnlocked(true)} />
+      )}
     </div>
   );
 }
