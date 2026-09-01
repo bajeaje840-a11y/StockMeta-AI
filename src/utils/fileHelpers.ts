@@ -3,6 +3,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 // @ts-ignore
 import UTIF from 'utif';
+import { inflate } from 'pako';
 import { renderPostScriptCodeToCanvas } from './postscriptRenderer';
 import { extractVectorSemanticInfo } from './vectorMetadataExtractor';
 
@@ -784,6 +785,90 @@ export async function extractEmbeddedXmpThumbnail(file: File): Promise<{ preview
 }
 
 /**
+ * Extracts native PDF / Illustrator document from Adobe Illustrator EPS Private Data
+ * (%AI9_PrivateDataBegin, %AI12_PrivateDataBegin, %AI24_PrivateDataBegin, or %%BeginData: ... Hex)
+ * Decompresses using pako if zlib compressed and renders with PDF.js for 100% pixel fidelity
+ */
+export async function extractAiPrivateDataPdf(
+  psText: string
+): Promise<{ previewUrl: string; base64Data: string; mimeTypeForAi: string } | null> {
+  try {
+    // 1. Match %AI9_PrivateDataBegin, %AI12_PrivateDataBegin, %AI24_PrivateDataBegin, etc.
+    const privateDataMatches = psText.matchAll(/%AI(?:[0-9]+)?_PrivateDataBegin([\s\S]*?)%AI(?:[0-9]+)?_PrivateDataEnd/gi);
+    let allHex = '';
+    for (const match of privateDataMatches) {
+      if (match && match[1]) {
+        const lines = match[1].split(/[\r\n]+/);
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('%')) {
+            allHex += trimmed.substring(1).replace(/[^0-9a-fA-F]/g, '');
+          } else {
+            allHex += trimmed.replace(/[^0-9a-fA-F]/g, '');
+          }
+        }
+      }
+    }
+
+    // 2. Also match %%BeginData: ... Hex
+    if (!allHex) {
+      const beginDataMatches = psText.matchAll(/%%BeginData:[^\r\n]*Hex[^\r\n]*([\s\S]*?)%%EndData/gi);
+      for (const match of beginDataMatches) {
+        if (match && match[1]) {
+          const lines = match[1].split(/[\r\n]+/);
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('%')) {
+              allHex += trimmed.substring(1).replace(/[^0-9a-fA-F]/g, '');
+            } else {
+              allHex += trimmed.replace(/[^0-9a-fA-F]/g, '');
+            }
+          }
+        }
+      }
+    }
+
+    // 3. If hex was extracted, decode to binary Uint8Array
+    if (allHex && allHex.length > 200) {
+      const len = Math.floor(allHex.length / 2);
+      const u8 = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        u8[i] = parseInt(allHex.substr(i * 2, 2), 16);
+      }
+
+      // Check if it's raw PDF (%PDF-)
+      const textDecoder = new TextDecoder('latin1');
+      const textSample = textDecoder.decode(u8.subarray(0, 2000));
+      const pdfIdx = textSample.indexOf('%PDF-');
+      if (pdfIdx !== -1) {
+        const pdfBuf = u8.subarray(pdfIdx).buffer;
+        const rendered = await renderPdfBufferToCanvas(pdfBuf);
+        if (rendered) return rendered;
+      }
+
+      // Check if it's zlib compressed (0x78 0x9C, 0x78 0xDA, 0x78 0x01)
+      if (u8[0] === 0x78 && (u8[1] === 0x9C || u8[1] === 0xDA || u8[1] === 0x01)) {
+        try {
+          const inflated = inflate(u8);
+          const infSample = textDecoder.decode(inflated.subarray(0, 2000));
+          const infPdfIdx = infSample.indexOf('%PDF-');
+          if (infPdfIdx !== -1) {
+            const pdfBuf = inflated.subarray(infPdfIdx).buffer;
+            const rendered = await renderPdfBufferToCanvas(pdfBuf);
+            if (rendered) return rendered;
+          }
+        } catch (zErr) {
+          console.warn('inflate exception on AI private data:', zErr);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('extractAiPrivateDataPdf exception:', err);
+  }
+  return null;
+}
+
+/**
  * Searches for embedded PDF streams or JPEG byte streams inside EPS/AI files
  */
 export async function extractEmbeddedStreamFromVector(file: File): Promise<{ previewUrl: string; base64Data: string; mimeTypeForAi: string } | null> {
@@ -801,16 +886,42 @@ export async function extractEmbeddedStreamFromVector(file: File): Promise<{ pre
         bytes[i + 3] === pdfMagic[3] &&
         bytes[i + 4] === pdfMagic[4]
       ) {
-        const pdfSlice = fullBuffer.slice(i);
-        const renderedPdf = await renderPdfBufferToCanvas(pdfSlice);
-        if (renderedPdf) {
+        // Find the last %%EOF after %PDF- to trim trailing PostScript garbage that breaks PDF.js
+        let eofIdx = -1;
+        for (let j = bytes.length - 10; j > i + 100; j--) {
+          if (
+            bytes[j] === 0x25 && // %
+            bytes[j + 1] === 0x25 && // %
+            bytes[j + 2] === 0x45 && // E
+            bytes[j + 3] === 0x4F && // O
+            bytes[j + 4] === 0x46 // F
+          ) {
+            eofIdx = j + 5;
+            break;
+          }
+        }
+
+        if (eofIdx > i) {
+          const pdfSlice = fullBuffer.slice(i, Math.min(bytes.length, eofIdx + 64));
+          const renderedPdf = await renderPdfBufferToCanvas(pdfSlice);
+          if (renderedPdf) {
+            return {
+              previewUrl: renderedPdf.previewUrl,
+              base64Data: renderedPdf.base64Data,
+              mimeTypeForAi: 'image/jpeg',
+            };
+          }
+        }
+
+        const fullSlice = fullBuffer.slice(i);
+        const renderedPdf2 = await renderPdfBufferToCanvas(fullSlice);
+        if (renderedPdf2) {
           return {
-            previewUrl: renderedPdf.previewUrl,
-            base64Data: renderedPdf.base64Data,
+            previewUrl: renderedPdf2.previewUrl,
+            base64Data: renderedPdf2.base64Data,
             mimeTypeForAi: 'image/jpeg',
           };
         }
-        break;
       }
     }
 
@@ -841,7 +952,6 @@ export async function extractEmbeddedStreamFromVector(file: File): Promise<{ pre
               maxCandidateLen = sliceLen;
             }
           }
-          // Skip to endIdx to avoid scanning inside this JPEG
           i = endIdx;
         }
       }
@@ -877,33 +987,49 @@ export async function extractEmbeddedImageFromVector(file: File): Promise<{ prev
     }
   }
 
-  // 1. Binary EPS TIFF Header preview (UTIF.js)
+  // 1. Binary EPS Header check (UTIF.js TIFF or embedded JPEG)
   const tiffResult = await extractTiffFromBinaryEps(file);
   if (tiffResult) return tiffResult;
 
-  // 2. XMP Packet thumbnail or EPSI hex preview (<xmpGImg:image> / %%BeginPreview)
-  const xmpResult = await extractEmbeddedXmpThumbnail(file);
-  if (xmpResult) return xmpResult;
+  // 2. Read first 25MB text of file to check AI Private Data & XMP
+  let psText = '';
+  try {
+    const sliceSize = Math.min(file.size, 25 * 1024 * 1024);
+    const buffer = await file.slice(0, sliceSize).arrayBuffer();
+    const textDecoder = new TextDecoder('latin1');
+    psText = textDecoder.decode(buffer);
+  } catch (e) {
+    console.warn('Error reading vector file text slice:', e);
+  }
 
-  // 3. Embedded PDF or JPEG stream
+  if (psText) {
+    // 2a. Check Adobe Illustrator Private Data (%AI9_PrivateDataBegin -> PDF)
+    const aiPrivateResult = await extractAiPrivateDataPdf(psText);
+    if (aiPrivateResult) return aiPrivateResult;
+
+    // 2b. XMP Packet thumbnail or EPSI hex preview (<xmpGImg:image> / %%BeginPreview)
+    const xmpResult = await extractEmbeddedXmpThumbnail(file);
+    if (xmpResult) return xmpResult;
+  }
+
+  // 3. Embedded PDF or JPEG stream across full binary buffer
   const streamResult = await extractEmbeddedStreamFromVector(file);
   if (streamResult) return streamResult;
 
   // 4. Client-Side Pure PostScript Vector Canvas Interpreter
-  try {
-    const buffer = await file.slice(0, Math.min(file.size, 10 * 1024 * 1024)).arrayBuffer();
-    const textDecoder = new TextDecoder('latin1');
-    const psText = textDecoder.decode(buffer);
-    const psCanvasRes = renderPostScriptCodeToCanvas(psText, 1200);
-    if (psCanvasRes) {
-      return {
-        previewUrl: psCanvasRes.previewUrl,
-        base64Data: psCanvasRes.base64Data,
-        mimeTypeForAi: psCanvasRes.mimeTypeForAi,
-      };
+  if (psText) {
+    try {
+      const psCanvasRes = renderPostScriptCodeToCanvas(psText, 1200);
+      if (psCanvasRes) {
+        return {
+          previewUrl: psCanvasRes.previewUrl,
+          base64Data: psCanvasRes.base64Data,
+          mimeTypeForAi: psCanvasRes.mimeTypeForAi,
+        };
+      }
+    } catch (psErr) {
+      console.warn('Client PostScript canvas interpreter fallback:', psErr);
     }
-  } catch (psErr) {
-    console.warn('Client PostScript canvas interpreter fallback:', psErr);
   }
 
   return null;
