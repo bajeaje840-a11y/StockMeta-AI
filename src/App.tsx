@@ -152,7 +152,28 @@ export default function App() {
           throw new Error('Could not read image base64 data for AI processing.');
         }
 
+        // If vector base64Data is missing, read raw file base64 so server can rasterize it on-the-fly
+        if (!base64Data && file.formatCategory === 'vector' && file.file) {
+          try {
+            base64Data = await new Promise<string>((resolve) => {
+              const reader = new FileReader();
+              reader.onload = () => {
+                const res = reader.result as string;
+                resolve(res.includes(',') ? res.split(',')[1] : res);
+              };
+              reader.onerror = () => resolve('');
+              reader.readAsDataURL(file.file!);
+            });
+          } catch (e) {
+            // Continue
+          }
+        }
+
         const creds = getActiveAiCredentials();
+        const timestamp = new Date().toISOString();
+        const fileHash =
+          file.fileHash ||
+          (file.id ? file.id.replace(/-/g, '').substring(0, 16).toUpperCase() : Math.random().toString(16).substring(2, 18).toUpperCase());
 
         // 2. Call multi-provider API endpoint (server or direct client fallback)
         let meta: any = null;
@@ -175,6 +196,8 @@ export default function App() {
               base64Data,
               mimeType: mimeTypeForAi,
               filename: file.name,
+              fileHash,
+              timestamp,
               keywordCount: aiConfig.keywordCount || 49,
               customPromptHint: aiConfig.customInstructions || '',
               vectorSemanticText,
@@ -195,6 +218,13 @@ export default function App() {
             meta = resData.metadata;
             providerUsed = resData.providerUsed || creds.provider;
             modelUsed = resData.modelUsed || creds.model;
+
+            if (resData.renderedPreviewUrl && resData.renderedBase64Data) {
+              previewUrl = resData.renderedPreviewUrl;
+              base64Data = resData.renderedBase64Data;
+              isRealArtworkPreview = true;
+            }
+
             adobeCat = mapToAdobeCategory(
               meta.category_guess,
               meta.title + ' ' + (meta.keywords || []).join(' ')
@@ -218,10 +248,12 @@ export default function App() {
             try {
               const directResult = await generateGeminiMetadataDirectly({
                 apiKey: creds.apiKey.trim(),
-                model: creds.model || 'gemini-3.7-flash',
+                model: creds.model || 'gemini-3.5-flash',
                 base64Data: base64Data || '',
                 mimeType: mimeTypeForAi,
                 filename: file.name,
+                fileHash,
+                timestamp,
                 keywordCount: aiConfig.keywordCount || 40,
                 customPromptHint: aiConfig.customInstructions || '',
                 vectorSemanticText,
@@ -259,6 +291,9 @@ export default function App() {
               ? {
                   ...f,
                   status: 'success',
+                  previewUrl: previewUrl || f.previewUrl,
+                  base64Data: base64Data || f.base64Data,
+                  isRealArtworkPreview: isRealArtworkPreview ?? f.isRealArtworkPreview,
                   title: meta.title || f.name,
                   description: meta.description || meta.title || f.name,
                   keywords: meta.keywords || [],

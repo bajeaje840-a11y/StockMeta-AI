@@ -2,6 +2,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
+import zlib from 'zlib';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Type } from '@google/genai';
@@ -39,6 +40,18 @@ function getApiKeyPool(): string[] {
 }
 
 let activeKeyIndex = 0;
+
+// Global Gemini Request Queue Serializer & Rate Limit Pacer
+let geminiQueueChain: Promise<any> = Promise.resolve();
+function paceGeminiRequest<T>(fn: () => Promise<T>): Promise<T> {
+  const result = geminiQueueChain.then(async () => {
+    const res = await fn();
+    await new Promise((r) => setTimeout(r, 200));
+    return res;
+  });
+  geminiQueueChain = result.catch(() => {});
+  return result;
+}
 
 /**
  * Get GenAI client for the current active key in rotation pool or a specific key
@@ -200,7 +213,7 @@ app.get('/api/key-status', (req, res) => {
 });
 
 function normalizeGeminiModel(model?: string): string {
-  if (!model) return 'gemini-3.6-flash';
+  if (!model) return 'gemini-3.5-flash';
   const m = model.toLowerCase().trim();
   if (
     m === 'gemini-2.5-flash' ||
@@ -209,7 +222,7 @@ function normalizeGeminiModel(model?: string): string {
     m === 'gemini-flash' ||
     m === 'flash'
   ) {
-    return 'gemini-3.6-flash';
+    return 'gemini-3.5-flash';
   }
   if (
     m === 'gemini-2.5-pro' ||
@@ -220,11 +233,20 @@ function normalizeGeminiModel(model?: string): string {
   ) {
     return 'gemini-3.1-pro-preview';
   }
+  if (m === 'gemini-3.5-flash-lite' || m === 'flash-lite' || m === 'lite') {
+    return 'gemini-3.5-flash-lite';
+  }
+  if (m === 'gemini-3.1-flash-lite') {
+    return 'gemini-3.1-flash-lite';
+  }
+  if (m === 'gemini-3.5-flash') {
+    return 'gemini-3.5-flash';
+  }
   if (m === 'gemini-3.6-flash') {
     return 'gemini-3.6-flash';
   }
-  if (m === 'gemini-3.1-flash-lite' || m === 'flash-lite' || m === 'lite') {
-    return 'gemini-3.1-flash-lite';
+  if (m === 'gemini-3.7-flash') {
+    return 'gemini-3.7-flash';
   }
   return model;
 }
@@ -251,7 +273,7 @@ function formatProviderErrorMessage(provider: string, err: any): string {
       return 'Google Gemini model is temporarily experiencing high global demand (503). Retrying automatically...';
     }
     if (lower.includes('429') || lower.includes('quota') || lower.includes('resource_exhausted')) {
-      return 'Gemini API Rate limit reached (429). Please wait a few moments or use a paid/different API key.';
+      return 'Gemini API Rate limit reached (429). The system automatically throttles and retries with backup models (Gemini Flash Lite) or you can try again in a few moments.';
     }
     if (lower.includes('permission_denied') || lower.includes('403')) {
       return 'Permission denied for this Gemini API key. Ensure Generative Language API is enabled or leave empty for built-in AI.';
@@ -331,9 +353,8 @@ app.post('/api/test-key', async (req, res) => {
       const testModel = normalizeGeminiModel(model);
       const candidateModels = Array.from(new Set([
         testModel,
-        'gemini-3.6-flash',
-        'gemini-3.1-flash-lite',
         'gemini-3.7-flash',
+        'gemini-3.1-flash-lite',
         'gemini-flash-latest',
         'gemini-3.1-pro-preview',
       ]));
@@ -364,6 +385,7 @@ app.post('/api/test-key', async (req, res) => {
             errStr.includes('404') ||
             errStr.includes('not found') ||
             errStr.includes('429') ||
+            errStr.includes('quota') ||
             errStr.includes('resource_exhausted') ||
             errStr.includes('timeout') ||
             errStr.includes('fetch failed') ||
@@ -372,6 +394,7 @@ app.post('/api/test-key', async (req, res) => {
             errStr.includes('headerstimeout') ||
             errStr.includes('headers timeout')
           ) {
+            await new Promise((r) => setTimeout(r, 800));
             continue;
           }
           break;
@@ -493,35 +516,17 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
   const outPath = path.join(tmpDir, `vector_out_${randId}.jpg`);
 
   try {
-    // Strategy 1: Check for embedded PDF stream (Common in Adobe Illustrator AI/EPS files)
-    const pdfIdx = fileBuffer.indexOf('%PDF-');
-    if (pdfIdx !== -1) {
-      const pdfPath = path.join(tmpDir, `embedded_${randId}.pdf`);
-      try {
-        fs.writeFileSync(pdfPath, fileBuffer.slice(pdfIdx));
-        execSync(
-          `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=94 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${pdfPath}"`,
-          { timeout: 15000, stdio: 'pipe' }
-        );
-        if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1000) {
-          return fs.readFileSync(outPath);
-        }
-      } catch (e) {
-        // Continue to next strategy
-      } finally {
-        if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath);
-      }
-    }
+    let cleanPsBuffer = fileBuffer;
 
-    // Strategy 2: Check for Binary EPS Header (0xC5 0xD0 0xD3 0xC6)
+    // Strategy 1: Check for Binary EPS Header (0xC5 0xD0 0xD3 0xC6) and strip header
     if (fileBuffer.length > 30 && fileBuffer[0] === 0xC5 && fileBuffer[1] === 0xD0 && fileBuffer[2] === 0xD3 && fileBuffer[3] === 0xC6) {
       const psOffset = fileBuffer.readUInt32LE(4);
       const psLength = fileBuffer.readUInt32LE(8);
       const tiffOffset = fileBuffer.readUInt32LE(20);
       const tiffLength = fileBuffer.readUInt32LE(24);
 
-      // Try TIFF preview from binary header
-      if (tiffOffset > 0 && tiffLength > 0 && fileBuffer.length >= tiffOffset + tiffLength) {
+      // Try TIFF preview embedded in binary header
+      if (tiffOffset > 0 && tiffLength > 100 && fileBuffer.length >= tiffOffset + tiffLength) {
         const tiffPath = path.join(tmpDir, `embedded_${randId}.tif`);
         try {
           fs.writeFileSync(tiffPath, fileBuffer.slice(tiffOffset, tiffOffset + tiffLength));
@@ -536,39 +541,91 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
         }
       }
 
-      // Try PS block from binary header
-      if (psOffset > 0 && psLength > 0 && fileBuffer.length >= psOffset + psLength) {
-        const psSlice = fileBuffer.slice(psOffset, psOffset + psLength);
-        const psPath = path.join(tmpDir, `extracted_${randId}.eps`);
-        try {
-          fs.writeFileSync(psPath, psSlice);
-          execSync(
-            `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -dEPSCrop -sDEVICE=jpeg -dJPEGQ=94 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${psPath}"`,
-            { timeout: 15000, stdio: 'pipe' }
-          );
-          if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1000) {
-            return fs.readFileSync(outPath);
-          }
-        } catch (e) {
-          // Fallback to standard GS on PS slice
+      if (psOffset > 0 && psLength > 100 && fileBuffer.length >= psOffset + psLength) {
+        cleanPsBuffer = fileBuffer.slice(psOffset, psOffset + psLength);
+      }
+    }
+
+    // Strategy 2: Check for embedded PDF stream (%PDF-) inside cleanPsBuffer or raw fileBuffer
+    const pdfIdx = cleanPsBuffer.indexOf('%PDF-');
+    if (pdfIdx !== -1) {
+      const pdfPath = path.join(tmpDir, `embedded_${randId}.pdf`);
+      try {
+        fs.writeFileSync(pdfPath, cleanPsBuffer.slice(pdfIdx));
+        execSync(
+          `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=95 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -dFirstPage=1 -dLastPage=1 -sOutputFile="${outPath}" "${pdfPath}"`,
+          { timeout: 15000, stdio: 'pipe' }
+        );
+        if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1000) {
+          return fs.readFileSync(outPath);
+        }
+      } catch (e) {
+        // Continue
+      } finally {
+        if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath);
+      }
+    }
+
+    // Strategy 3: Check Illustrator Private Data (%AI9_PrivateDataBegin -> inflate -> %PDF-)
+    const strContent = cleanPsBuffer.slice(0, Math.min(cleanPsBuffer.length, 3000000)).toString('latin1');
+    const privBeginMatch = strContent.match(/%AI\d+_PrivateDataBegin[\r\n]+([\s\S]*?)%AI\d+_PrivateDataEnd/i);
+    if (privBeginMatch && privBeginMatch[1]) {
+      try {
+        const hexStr = privBeginMatch[1].replace(/[\r\n%]/g, '').trim();
+        const hexBuf = Buffer.from(hexStr, 'hex');
+        let decompressed = hexBuf;
+        if (hexBuf.length > 2 && hexBuf[0] === 0x78) {
+          try { decompressed = zlib.inflateSync(hexBuf); } catch (zErr) {}
+        }
+        const innerPdfIdx = decompressed.indexOf('%PDF-');
+        if (innerPdfIdx !== -1) {
+          const pdfPath = path.join(tmpDir, `priv_${randId}.pdf`);
           try {
+            fs.writeFileSync(pdfPath, decompressed.slice(innerPdfIdx));
             execSync(
-              `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=94 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${psPath}"`,
+              `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=95 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -dFirstPage=1 -dLastPage=1 -sOutputFile="${outPath}" "${pdfPath}"`,
               { timeout: 15000, stdio: 'pipe' }
             );
             if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1000) {
               return fs.readFileSync(outPath);
             }
-          } catch (e2) {}
-        } finally {
-          if (fs.existsSync(psPath)) fs.unlinkSync(psPath);
+          } catch (e) {} finally {
+            if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath);
+          }
+        }
+      } catch (e) {}
+    }
+
+    // Strategy 4: Scan for embedded JPEG byte streams (0xFF 0xD8 0xFF ... 0xFF 0xD9)
+    let bestStart = -1, bestEnd = -1, maxLen = 0;
+    for (let i = 0; i < cleanPsBuffer.length - 500; i++) {
+      if (cleanPsBuffer[i] === 0xFF && cleanPsBuffer[i + 1] === 0xD8 && cleanPsBuffer[i + 2] === 0xFF) {
+        let endIdx = -1;
+        const maxSearch = Math.min(cleanPsBuffer.length - 1, i + 5 * 1024 * 1024);
+        for (let j = i + 300; j < maxSearch; j++) {
+          if (cleanPsBuffer[j] === 0xFF && cleanPsBuffer[j + 1] === 0xD9) {
+            endIdx = j + 2;
+            break;
+          }
+        }
+        if (endIdx > i && endIdx - i > maxLen && endIdx - i > 1000) {
+          maxLen = endIdx - i;
+          bestStart = i;
+          bestEnd = endIdx;
+          i = endIdx;
         }
       }
     }
+    if (bestStart !== -1 && bestEnd > bestStart) {
+      const jpegSlice = cleanPsBuffer.slice(bestStart, bestEnd);
+      fs.writeFileSync(outPath, jpegSlice);
+      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1000) {
+        return fs.readFileSync(outPath);
+      }
+    }
 
-    // Strategy 3: Check for embedded XMP base64 JPEG thumbnail
-    const strHead = fileBuffer.slice(0, 1000000).toString('latin1');
-    const xmpMatch = strHead.match(/<(?:xmpGImg|xapGImg|photoshop):(?:image|Thumbnail)>([\s\S]*?)<\/(?:xmpGImg|xapGImg|photoshop):(?:image|Thumbnail)>/i);
+    // Strategy 5: Check XMP base64 thumbnail (<xmpGImg:image> / <photoshop:Thumbnail>)
+    const xmpMatch = strContent.match(/<(?:xmpGImg|xapGImg|photoshop):(?:image|Thumbnail)>([\s\S]*?)<\/(?:xmpGImg|xapGImg|photoshop):(?:image|Thumbnail)>/i);
     if (xmpMatch && xmpMatch[1]) {
       try {
         const cleanB64 = xmpMatch[1].replace(/[\r\n\s]/g, '');
@@ -579,18 +636,16 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
             return fs.readFileSync(outPath);
           }
         }
-      } catch (e) {
-        // Continue
-      }
+      } catch (e) {}
     }
 
-    // Strategy 4: Direct Ghostscript with -dEPSCrop
-    const inPath = path.join(tmpDir, `raw_${randId}${ext}`);
-    fs.writeFileSync(inPath, fileBuffer);
+    // Strategy 6: Ghostscript directly on clean EPS PostScript file (with EPSCrop)
+    const psPath = path.join(tmpDir, `clean_${randId}${ext}`);
+    fs.writeFileSync(psPath, cleanPsBuffer);
 
     try {
       execSync(
-        `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -dEPSCrop -sDEVICE=jpeg -dJPEGQ=94 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${inPath}"`,
+        `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -dEPSCrop -sDEVICE=jpeg -dJPEGQ=95 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${psPath}"`,
         { timeout: 15000, stdio: 'pipe' }
       );
       if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1000) {
@@ -598,10 +653,10 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
       }
     } catch (e) {}
 
-    // Strategy 5: Ghostscript standard (without EPSCrop, full artboard)
+    // Strategy 7: Ghostscript standard (full artboard)
     try {
       execSync(
-        `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=94 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${inPath}"`,
+        `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=95 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${psPath}"`,
         { timeout: 15000, stdio: 'pipe' }
       );
       if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1000) {
@@ -609,13 +664,15 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
       }
     } catch (e) {}
 
-    // Strategy 6: ImageMagick Convert
+    // Strategy 8: ImageMagick Convert
     try {
-      execSync(`convert -density 150 "${inPath}" -background white -flatten "${outPath}"`, { timeout: 15000, stdio: 'pipe' });
+      execSync(`convert -density 150 "${psPath}[0]" -background white -flatten "${outPath}"`, { timeout: 15000, stdio: 'pipe' });
       if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1000) {
         return fs.readFileSync(outPath);
       }
-    } catch (e) {}
+    } catch (e) {} finally {
+      if (fs.existsSync(psPath)) fs.unlinkSync(psPath);
+    }
 
     return null;
   } catch (err) {
@@ -683,8 +740,11 @@ app.post('/api/generate-metadata', async (req, res) => {
       model,
       baseUrl,
       base64Data,
+      rawFileBase64,
       mimeType,
       filename,
+      fileHash: clientFileHash,
+      timestamp: clientTimestamp,
       keywordCount = 49,
       customPromptHint,
       vectorSemanticText,
@@ -692,29 +752,62 @@ app.post('/api/generate-metadata', async (req, res) => {
       cleanSubject: clientCleanSubject,
     } = req.body;
 
-    let cleanBase64 = String(base64Data || '').trim();
+    const timestamp = clientTimestamp || new Date().toISOString();
+
+    let cleanBase64 = String(base64Data || rawFileBase64 || '').trim();
     if (cleanBase64.includes(',')) {
       cleanBase64 = cleanBase64.split(',')[1].trim();
     }
     cleanBase64 = cleanBase64.replace(/[\r\n\s]/g, '');
 
-    const isVector = /\.(eps|ai|svg|pdf|cdr|ps)$/i.test(filename || '') || (mimeType && mimeType.includes('svg'));
-    const isRealVisual = isRealArtworkPreview !== false;
-    let hasImage = cleanBase64.length > 50 && isRealVisual;
+    let fileHash = clientFileHash;
+    if (!fileHash) {
+      const hashInput = (cleanBase64 || '') + (filename || '') + timestamp;
+      fileHash = crypto.createHash('sha256').update(hashInput).digest('hex').substring(0, 16).toUpperCase();
+    }
 
-    // If raw vector payload was passed instead of pre-rendered image, attempt on-the-fly rendering
-    if (isVector && cleanBase64.length > 0 && (!mimeType || mimeType.includes('postscript') || mimeType.includes('pdf'))) {
+    const isVector = /\.(eps|ai|svg|pdf|cdr|ps)$/i.test(filename || '') || (mimeType && mimeType.includes('svg'));
+    let isRealVisual = isRealArtworkPreview !== false;
+
+    // Check if cleanBase64 is ALREADY a valid pre-rendered raster image (JPEG/PNG/GIF/WebP)
+    const isAlreadyRenderedImage =
+      cleanBase64.startsWith('/9j/') ||
+      cleanBase64.startsWith('iVBOR') ||
+      cleanBase64.startsWith('R0lGOD') ||
+      cleanBase64.startsWith('UklGR');
+
+    let serverRenderedPreviewUrl: string | undefined;
+    let serverRenderedBase64Data: string | undefined;
+
+    // Determine the raw vector base64 source if cleanBase64 is not already a rendered image
+    const rawVectorSource = (!isAlreadyRenderedImage && cleanBase64.length > 0)
+      ? cleanBase64
+      : (rawFileBase64 ? String(rawFileBase64).replace(/^data:[^;]+;base64,/, '').replace(/[\r\n\s]/g, '') : '');
+
+    // If payload is a vector (or EPS/AI/PDF) and we have raw vector data, attempt on-the-fly Ghostscript/ImageMagick rasterization
+    if (isVector && rawVectorSource.length > 0 && (!isAlreadyRenderedImage || !isRealVisual)) {
       try {
-        const rawBuf = Buffer.from(cleanBase64, 'base64');
+        const rawBuf = Buffer.from(rawVectorSource, 'base64');
         const renderedJpeg = renderVectorBufferToJpeg(rawBuf, filename);
         if (renderedJpeg && renderedJpeg.length > 500) {
           cleanBase64 = renderedJpeg.toString('base64');
-          hasImage = true;
+          serverRenderedBase64Data = cleanBase64;
+          serverRenderedPreviewUrl = `data:image/jpeg;base64,${cleanBase64}`;
+          isRealVisual = true;
         }
       } catch (e) {
-        // Fallback
+        console.warn('Server on-the-fly vector rasterization exception:', e);
       }
     }
+
+    // Only attach image payload to AI if cleanBase64 is genuinely a valid raster image
+    const isValidRasterImage =
+      cleanBase64.startsWith('/9j/') ||
+      cleanBase64.startsWith('iVBOR') ||
+      cleanBase64.startsWith('R0lGOD') ||
+      cleanBase64.startsWith('UklGR');
+
+    const hasImage = cleanBase64.length > 50 && isRealVisual && isValidRasterImage;
 
     if (!hasImage && !isVector && cleanBase64.length <= 50) {
       return res.status(400).json({
@@ -752,6 +845,12 @@ DEEP VISUAL & CONTENT ANALYSIS REQUIREMENTS:
 3. Concept & Mood: Identify practical concepts, industries, and intended use cases (e.g. web banners, posters, mobile UI, packaging, advertising, branding).
 4. Composition & Art Style: Recognize whether it is flat vector art, isometric, vintage emblem, line art, modern minimalist, geometric pattern, or 3D render.
 
+CRITICAL BATCH UNICITY & COPYRIGHT COMPLIANCE MANDATE:
+- You MUST generate 100% original, creative, and visually content-accurate titles and descriptions for every asset to strictly avoid copyright infringement, trademark flags, or duplicate content penalties across microstock agencies (Adobe Stock, Shutterstock, Freepik, Getty Images).
+- Incorporate the unique visual content along with the file's unique fingerprint (Hash: ${fileHash}, Timestamp: ${timestamp}) to ensure that even for batch uploads of visually similar artworks or vector variants, every title and description is completely distinct and original.
+- NEVER reuse duplicate title templates, repetitive phrasing, or identical descriptions across files in a batch upload. Every title MUST be unique, 60-90 characters, commercial, packed with relevant keywords, and strictly free of commas.
+- Do NOT base titles merely on generic filenames like "001.eps" or "002.eps"; ignore generic file numbers and analyze the actual visual content in deep detail.
+
 STRICT MICROSTOCK COMPLIANCE RULES:
 - Title: Exactly ONE clear, highly descriptive, commercial sentence (60-90 characters) describing the EXACT visual content in the image. Packed with top search keywords. Strictly NEVER include commas in the title (Adobe Stock forbids commas). No quotation marks.
 - Description: 1-2 clean sentences accurately describing the visual elements, design elements, and commercial applications.
@@ -773,12 +872,14 @@ JSON Response Schema:
 
     const promptText = `Analyze the content and visual design of this artwork in complete detail.
 Filename: "${filename || 'stock_media'}"
+Unique File Fingerprint (SHA256 Hash Seed): ${fileHash}
+Processing Timestamp: ${timestamp}
 ${cleanSubject ? `Primary Subject: "${cleanSubject}"` : ''}
 ${isVector ? `Asset Format: Scalable Vector Graphic / Vector Artwork Asset.` : ''}
 ${vectorSemanticText ? `\n--- EMBEDDED VECTOR FILE PROPERTIES & METADATA ---\n${vectorSemanticText}\n-----------------------------------------------` : ''}
 Target Keyword Count: Exactly ${targetKwCount} unique keywords.
 ${customPromptHint ? `Custom Guidance: ${customPromptHint}` : ''}
-Inspect the artwork carefully and generate premium, 100% content-accurate microstock SEO metadata as valid JSON.`;
+Inspect the artwork carefully and generate premium, 100% original and content-accurate microstock SEO metadata as valid JSON.`;
 
     let resultText = '';
 
@@ -786,52 +887,201 @@ Inspect the artwork carefully and generate premium, 100% content-accurate micros
     // 1. GOOGLE GEMINI PROVIDER
     // ==========================================
     if (provider === 'gemini') {
-      const selectedModel = normalizeGeminiModel(model);
-      const candidateModels = Array.from(new Set([
-        selectedModel,
-        'gemini-3.6-flash',
-        'gemini-3.1-flash-lite',
-        'gemini-3.7-flash',
-        'gemini-flash-latest',
-        'gemini-3.1-pro-preview',
-      ]));
-      const keyPool = getApiKeyPool();
-      const hasCustomKey = !!apiKey?.trim();
-      const totalKeys = hasCustomKey ? 1 : Math.max(keyPool.length, 1);
+      await paceGeminiRequest(async () => {
+        const selectedModel = normalizeGeminiModel(model);
+        const candidateModels = Array.from(new Set([
+          selectedModel,
+          'gemini-3.5-flash',
+          'gemini-3.5-flash-lite',
+          'gemini-3.1-flash-lite',
+          'gemini-3.6-flash',
+          'gemini-3.7-flash',
+        ]));
+        const keyPool = getApiKeyPool();
+        const hasCustomKey = !!apiKey?.trim();
+        const totalKeys = hasCustomKey ? 1 : Math.max(keyPool.length, 1);
 
-      let attempts = 0;
-      let lastError: any = null;
+        let attempts = 0;
+        let lastError: any = null;
 
-      for (const curModel of candidateModels) {
-        let modelSuccess = false;
-        attempts = 0;
-        
-        while (attempts < (hasCustomKey ? 2 : totalKeys * 2)) {
-          const currentAttemptIndex = hasCustomKey ? 0 : (activeKeyIndex + attempts) % totalKeys;
-          const { client: ai, keySnippet } = hasCustomKey
-            ? getGenAIClient(apiKey)
-            : getGenAIClient();
+        for (const curModel of candidateModels) {
+          let modelSuccess = false;
+          attempts = 0;
+          const maxAttemptsPerModel = hasCustomKey ? 1 : Math.max(totalKeys * 2, 2);
+          
+          while (attempts < maxAttemptsPerModel) {
+            const currentAttemptIndex = hasCustomKey ? 0 : (activeKeyIndex + attempts) % totalKeys;
+            const { client: ai, keySnippet } = hasCustomKey
+              ? getGenAIClient(apiKey)
+              : getGenAIClient();
 
+            try {
+              console.log(
+                `[Gemini AI] Processing ${filename} using model ${curModel} (${keySnippet}) (attempt ${attempts + 1}/${maxAttemptsPerModel})...`
+              );
+
+              const geminiParts: any[] = [];
+              if (hasImage) {
+                geminiParts.push({
+                  inlineData: {
+                    mimeType: safeMimeType,
+                    data: cleanBase64,
+                  },
+                });
+              }
+              geminiParts.push({ text: promptText });
+
+              const response = await ai.models.generateContent({
+                model: curModel,
+                contents: {
+                  parts: geminiParts,
+                },
+                config: {
+                  systemInstruction,
+                  temperature: 0.2,
+                  responseMimeType: 'application/json',
+                },
+              });
+
+              resultText = response.text || '';
+              if (!resultText && response.candidates?.[0]?.content?.parts) {
+                for (const part of response.candidates[0].content.parts) {
+                  if (part.text) {
+                    resultText += part.text;
+                  }
+                }
+              }
+              if (!hasCustomKey) {
+                activeKeyIndex = currentAttemptIndex;
+              }
+              modelSuccess = true;
+              break;
+            } catch (err: any) {
+              lastError = err;
+              const errStr = (err?.message || err?.cause?.message || String(err)).toLowerCase();
+              attempts++;
+
+              console.warn(`[Gemini AI] Error on ${curModel} for ${filename}:`, errStr.substring(0, 120));
+
+              // If rate limited / quota exhausted on this model (429 / resource exhausted)
+              if (errStr.includes('429') || errStr.includes('quota') || errStr.includes('limit') || errStr.includes('resource_exhausted')) {
+                if (!hasCustomKey && totalKeys > 1) {
+                  activeKeyIndex = (activeKeyIndex + 1) % totalKeys;
+                }
+                console.warn(`[Gemini AI] Model ${curModel} rate limited / quota exhausted. Advancing to backup candidate model...`);
+                // Advance to next candidate model in candidateModels array immediately
+                break;
+              }
+
+              // If it's an image decoding / invalid inlineData / 400 error, try text-only fallback with vector filename and context
+              if (errStr.includes('decode') || errStr.includes('image') || (errStr.includes('400') && !errStr.includes('key'))) {
+                try {
+                  console.log(`[Gemini AI] Trying fallback text generation for ${filename}...`);
+                  const textFallbackRes = await ai.models.generateContent({
+                    model: curModel,
+                    contents: `${promptText}\nNote: This is a professional scalable vector graphic / artwork asset named "${filename}". Please perform deep microstock SEO analysis based on the vector subject "${cleanSubject}" to generate complete commercial JSON metadata.`,
+                    config: {
+                      systemInstruction,
+                      temperature: 0.2,
+                      responseMimeType: 'application/json',
+                    },
+                  });
+
+                  resultText = textFallbackRes.text || '';
+                  if (resultText) {
+                    modelSuccess = true;
+                    break;
+                  }
+                } catch (fallbackTextErr) {
+                  console.warn('[Gemini AI] Vision decode fallback error:', fallbackTextErr);
+                }
+              }
+
+              // If model is unsupported (503, 404, or rate limited after all attempts), try next candidate model
+              if (
+                errStr.includes('503') ||
+                errStr.includes('unavailable') ||
+                errStr.includes('high demand') ||
+                errStr.includes('404') ||
+                errStr.includes('not found') ||
+                errStr.includes('429') ||
+                errStr.includes('quota') ||
+                errStr.includes('resource_exhausted') ||
+                errStr.includes('timeout') ||
+                errStr.includes('fetch failed') ||
+                errStr.includes('headers timeout') ||
+                errStr.includes('headerstimeout') ||
+                errStr.includes('econnreset') ||
+                errStr.includes('und_err')
+              ) {
+                break; // break loop to try next model in candidateModels (e.g. gemini-3.1-flash-lite)
+              }
+
+              if (hasCustomKey && (errStr.includes('invalid') || errStr.includes('permission_denied') || errStr.includes('403') || errStr.includes('400 bad request'))) {
+                console.warn('[Gemini AI] Custom API key failed with auth error. Trying seamless server built-in key fallback...');
+                try {
+                  const { client: fallbackAi } = getGenAIClient();
+                  const fallbackParts: any[] = [];
+                  if (hasImage) {
+                    fallbackParts.push({
+                      inlineData: {
+                        mimeType: safeMimeType,
+                        data: cleanBase64,
+                      },
+                    });
+                  }
+                  fallbackParts.push({ text: promptText });
+
+                  const fallbackResponse = await fallbackAi.models.generateContent({
+                    model: curModel,
+                    contents: {
+                      parts: fallbackParts,
+                    },
+                    config: {
+                      systemInstruction,
+                      temperature: 0.2,
+                      responseMimeType: 'application/json',
+                    },
+                  });
+
+                  resultText = fallbackResponse.text || '';
+                  if (resultText) {
+                    modelSuccess = true;
+                    break;
+                  }
+                } catch (fallbackErr) {
+                  console.warn('[Gemini AI] Fallback also failed:', fallbackErr);
+                  throw new Error(formatProviderErrorMessage('gemini', err));
+                }
+              }
+            }
+          }
+
+          if (modelSuccess && resultText) {
+            break;
+          }
+        }
+
+        // If all candidate models on custom key failed with rate limit 429, try seamless server pool fallback
+        if (!resultText && hasCustomKey) {
+          console.warn('[Gemini AI] Custom key rate-limited/failed on all models. Attempting server built-in key pool fallback...');
           try {
-            console.log(
-              `[Gemini AI] Processing ${filename} using model ${curModel} (${keySnippet})...`
-            );
-
-            const geminiParts: any[] = [];
+            const { client: fallbackAi } = getGenAIClient();
+            const fallbackParts: any[] = [];
             if (hasImage) {
-              geminiParts.push({
+              fallbackParts.push({
                 inlineData: {
                   mimeType: safeMimeType,
                   data: cleanBase64,
                 },
               });
             }
-            geminiParts.push({ text: promptText });
+            fallbackParts.push({ text: promptText });
 
-            const response = await ai.models.generateContent({
-              model: curModel,
+            const fallbackResponse = await fallbackAi.models.generateContent({
+              model: 'gemini-3.1-flash-lite',
               contents: {
-                parts: geminiParts,
+                parts: fallbackParts,
               },
               config: {
                 systemInstruction,
@@ -840,123 +1090,18 @@ Inspect the artwork carefully and generate premium, 100% content-accurate micros
               },
             });
 
-            resultText = response.text || '';
-            if (!resultText && response.candidates?.[0]?.content?.parts) {
-              for (const part of response.candidates[0].content.parts) {
-                if (part.text) {
-                  resultText += part.text;
-                }
-              }
-            }
-            if (!hasCustomKey) {
-              activeKeyIndex = currentAttemptIndex;
-            }
-            modelSuccess = true;
-            break;
-          } catch (err: any) {
-            lastError = err;
-            const errStr = (err?.message || err?.cause?.message || String(err)).toLowerCase();
-
-            attempts++;
-
-            if (!hasCustomKey && (errStr.includes('429') || errStr.includes('quota') || errStr.includes('limit') || errStr.includes('resource_exhausted'))) {
-              activeKeyIndex = (activeKeyIndex + 1) % totalKeys;
-            }
-
-            // If it's an image decoding / invalid inlineData / 400 error, try text-only fallback with vector filename and context
-            if (errStr.includes('decode') || errStr.includes('image') || errStr.includes('bad request') || errStr.includes('400')) {
-              try {
-                console.log(`[Gemini AI] Trying fallback text generation for ${filename}...`);
-                const textFallbackRes = await ai.models.generateContent({
-                  model: curModel,
-                  contents: `${promptText}\nNote: This is a professional scalable vector graphic / artwork asset named "${filename}". Please perform deep microstock SEO analysis based on the vector subject "${cleanSubject}" to generate complete commercial JSON metadata.`,
-                  config: {
-                    systemInstruction,
-                    temperature: 0.2,
-                    responseMimeType: 'application/json',
-                  },
-                });
-
-                resultText = textFallbackRes.text || '';
-                if (resultText) {
-                  modelSuccess = true;
-                  break;
-                }
-              } catch (fallbackTextErr) {
-                console.warn('[Gemini AI] Vision decode fallback error:', fallbackTextErr);
-              }
-            }
-
-            // If it's a 503, 404, 429, quota, timeout or fetch error, switch to next candidate model
-            if (
-              errStr.includes('503') ||
-              errStr.includes('unavailable') ||
-              errStr.includes('high demand') ||
-              errStr.includes('404') ||
-              errStr.includes('not found') ||
-              errStr.includes('429') ||
-              errStr.includes('quota') ||
-              errStr.includes('resource_exhausted') ||
-              errStr.includes('timeout') ||
-              errStr.includes('fetch failed') ||
-              errStr.includes('headers timeout') ||
-              errStr.includes('headerstimeout') ||
-              errStr.includes('econnreset') ||
-              errStr.includes('und_err')
-            ) {
-              break; // break to next model in candidateModels
-            }
-
-            if (hasCustomKey && (errStr.includes('invalid') || errStr.includes('permission_denied') || errStr.includes('403') || errStr.includes('400 bad request'))) {
-              console.warn('[Gemini AI] Custom API key failed with auth error. Trying seamless server built-in key fallback...');
-              try {
-                const { client: fallbackAi } = getGenAIClient();
-                const fallbackParts: any[] = [];
-                if (hasImage) {
-                  fallbackParts.push({
-                    inlineData: {
-                      mimeType: safeMimeType,
-                      data: cleanBase64,
-                    },
-                  });
-                }
-                fallbackParts.push({ text: promptText });
-
-                const fallbackResponse = await fallbackAi.models.generateContent({
-                  model: curModel,
-                  contents: {
-                    parts: fallbackParts,
-                  },
-                  config: {
-                    systemInstruction,
-                    temperature: 0.2,
-                    responseMimeType: 'application/json',
-                  },
-                });
-
-                resultText = fallbackResponse.text || '';
-                if (resultText) {
-                  modelSuccess = true;
-                  break;
-                }
-              } catch (fallbackErr) {
-                console.warn('[Gemini AI] Fallback also failed:', fallbackErr);
-                throw new Error(formatProviderErrorMessage('gemini', err));
-              }
-            }
+            resultText = fallbackResponse.text || '';
+          } catch (poolErr) {
+            console.warn('[Gemini AI] Built-in pool fallback also failed:', poolErr);
           }
         }
 
-        if (modelSuccess && resultText) {
-          break;
+        if (!resultText) {
+          throw new Error(
+            formatProviderErrorMessage('gemini', lastError)
+          );
         }
-      }
-
-      if (!resultText) {
-        throw new Error(
-          formatProviderErrorMessage('gemini', lastError)
-        );
-      }
+      });
     }
 
     // ==========================================
@@ -1162,6 +1307,8 @@ Inspect the artwork carefully and generate premium, 100% content-accurate micros
       metadata: sanitized,
       providerUsed: provider,
       modelUsed: model || 'default',
+      renderedPreviewUrl: serverRenderedPreviewUrl,
+      renderedBase64Data: serverRenderedBase64Data,
     });
   } catch (err: any) {
     console.error('Error generating metadata:', err);

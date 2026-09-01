@@ -68,12 +68,18 @@ function cmykToRgb(c: number, m: number, y: number, k: number): [number, number,
 /**
  * Fast PostScript Tokenizer that handles DSC comments, strings, hex literals, arrays, and procedures
  */
-function tokenizePostScript(code: string, maxTokens = 120000): string[] {
+function tokenizePostScript(code: string, maxTokens = 60000): string[] {
   const tokens: string[] = [];
   let i = 0;
   const len = code.length;
+  const startTime = Date.now();
 
   while (i < len && tokens.length < maxTokens) {
+    // Timeout guard to prevent any potential main thread lock
+    if (tokens.length % 10000 === 0 && Date.now() - startTime > 400) {
+      break;
+    }
+
     const ch = code[i];
 
     // Whitespace
@@ -104,7 +110,7 @@ function tokenizePostScript(code: string, maxTokens = 120000): string[] {
         else if (code[i] === ')') depth--;
         i++;
       }
-      tokens.push('(' + code.substring(start, i - 1) + ')');
+      tokens.push('(' + code.substring(start, Math.max(start, i - 1)) + ')');
       continue;
     }
 
@@ -118,8 +124,8 @@ function tokenizePostScript(code: string, maxTokens = 120000): string[] {
       continue;
     }
 
-    // Brackets
-    if (ch === '{' || ch === '}' || ch === '[' || ch === ']') {
+    // Brackets and delimiters
+    if (ch === '{' || ch === '}' || ch === '[' || ch === ']' || ch === '>' || ch === '/' || ch === '=') {
       tokens.push(ch);
       i++;
       continue;
@@ -130,6 +136,12 @@ function tokenizePostScript(code: string, maxTokens = 120000): string[] {
     while (i < len && !' \t\r\n\f%(){}[]<>'.includes(code[i])) {
       i++;
     }
+
+    if (i === start) {
+      i++; // Guarantee progress to eliminate infinite loops
+      continue;
+    }
+
     const tok = code.substring(start, i);
     if (tok) tokens.push(tok);
   }

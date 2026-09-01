@@ -883,7 +883,8 @@ export async function extractAiPrivateDataPdf(
  */
 export async function extractEmbeddedStreamFromVector(file: File): Promise<{ previewUrl: string; base64Data: string; mimeTypeForAi: string } | null> {
   try {
-    const fullBuffer = await file.arrayBuffer();
+    const scanSize = Math.min(file.size, 10 * 1024 * 1024);
+    const fullBuffer = await file.slice(0, scanSize).arrayBuffer();
     const bytes = new Uint8Array(fullBuffer);
 
     // 1. Search for PDF Stream (%PDF-1.) across the AI or EPS file
@@ -943,7 +944,7 @@ export async function extractEmbeddedStreamFromVector(file: File): Promise<{ pre
     for (let i = 0; i < bytes.length - 500; i++) {
       if (bytes[i] === 0xFF && bytes[i + 1] === 0xD8 && bytes[i + 2] === 0xFF) {
         let endIdx = -1;
-        const maxSearch = Math.min(bytes.length - 1, i + 6 * 1024 * 1024);
+        const maxSearch = Math.min(bytes.length - 1, i + 4 * 1024 * 1024);
         for (let j = i + 300; j < maxSearch; j++) {
           if (bytes[j] === 0xFF && bytes[j + 1] === 0xD9) {
             endIdx = j + 2;
@@ -1216,18 +1217,18 @@ export async function prepareFileForAi(file: File): Promise<{
       }
 
       try {
-        // 1st Priority: Native Client-Side Zero-Latency Vector Extractor (AI Private Data / Binary TIFF / PDF Stream / XMP)
-        const extracted = await extractEmbeddedImageFromVector(file);
-        if (extracted && extracted.base64Data) {
+        // 1st Priority: Instant Binary EPS TIFF check (< 2ms, 30 bytes check)
+        const tiffExtracted = await extractTiffFromBinaryEps(file);
+        if (tiffExtracted && tiffExtracted.base64Data) {
           return {
-            ...extracted,
+            ...tiffExtracted,
             isRealArtworkPreview: true,
             vectorSemanticText,
             cleanSubject,
           };
         }
 
-        // 2nd Priority: Server-Side Ghostscript & Multi-Strategy Vector Engine (up to 50MB)
+        // 2nd Priority: Server-Side Ghostscript & Multi-Strategy Vector Engine (up to 50MB, fast native binary, 0% browser load)
         if (file.size <= 50 * 1024 * 1024) {
           const serverRendered = await renderVectorViaServer(file);
           if (serverRendered && serverRendered.base64Data) {
@@ -1240,10 +1241,21 @@ export async function prepareFileForAi(file: File): Promise<{
           }
         }
 
-        // 3rd Priority: Client-Side PostScript Vector Interpreter (with strict contrast check)
-        if (file.size <= 25 * 1024 * 1024) {
+        // 3rd Priority: Other embedded stream extraction (AI Private Data / PDF Stream / XMP)
+        const extracted = await extractEmbeddedImageFromVector(file);
+        if (extracted && extracted.base64Data) {
+          return {
+            ...extracted,
+            isRealArtworkPreview: true,
+            vectorSemanticText,
+            cleanSubject,
+          };
+        }
+
+        // 4th Priority: Client-Side PostScript Vector Interpreter (with timeout guards)
+        if (file.size <= 15 * 1024 * 1024) {
           try {
-            const sliceSize = Math.min(file.size, 15 * 1024 * 1024);
+            const sliceSize = Math.min(file.size, 8 * 1024 * 1024);
             const buffer = await file.slice(0, sliceSize).arrayBuffer();
             const textDecoder = new TextDecoder('latin1');
             const psText = textDecoder.decode(buffer);
@@ -1261,11 +1273,18 @@ export async function prepareFileForAi(file: File): Promise<{
           }
         }
 
-        // 4th Priority: Clean vector artboard showcase canvas preview (base64Data is empty so AI doesn't see placeholder badge)
+        // 5th Priority: Clean vector artboard showcase canvas preview with raw vector base64 for server-side rasterization
+        let rawVectorBase64 = '';
+        try {
+          rawVectorBase64 = await readFileAsBase64Only(file);
+        } catch (e) {
+          // ignore
+        }
+
         const fallbackBadge = await renderEpsCanvasPreview(file);
         return {
           previewUrl: fallbackBadge.previewUrl,
-          base64Data: '', // DO NOT send placeholder badge to AI
+          base64Data: rawVectorBase64, // Raw vector data sent to backend so server can rasterize into genuine JPEG
           mimeTypeForAi: 'image/jpeg',
           isRealArtworkPreview: false,
           vectorSemanticText,

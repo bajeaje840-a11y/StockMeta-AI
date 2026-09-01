@@ -113,7 +113,7 @@ export function sanitizeMicrostockMetadata(parsed: any, filename: string): {
 }
 
 export function normalizeGeminiModel(model?: string): string {
-  if (!model) return 'gemini-3.6-flash';
+  if (!model) return 'gemini-3.5-flash';
   const m = model.toLowerCase().trim();
   if (
     m === 'gemini-2.5-flash' ||
@@ -122,16 +122,31 @@ export function normalizeGeminiModel(model?: string): string {
     m === 'gemini-flash' ||
     m === 'flash'
   ) {
-    return 'gemini-3.6-flash';
+    return 'gemini-3.5-flash';
   }
   if (
     m === 'gemini-2.5-pro' ||
-    m === 'gemini-1.5-pro' ||
     m === 'gemini-2.0-pro' ||
+    m === 'gemini-1.5-pro' ||
     m === 'gemini-pro' ||
     m === 'pro'
   ) {
     return 'gemini-3.1-pro-preview';
+  }
+  if (m === 'gemini-3.5-flash-lite' || m === 'flash-lite' || m === 'lite') {
+    return 'gemini-3.5-flash-lite';
+  }
+  if (m === 'gemini-3.1-flash-lite') {
+    return 'gemini-3.1-flash-lite';
+  }
+  if (m === 'gemini-3.5-flash') {
+    return 'gemini-3.5-flash';
+  }
+  if (m === 'gemini-3.6-flash') {
+    return 'gemini-3.6-flash';
+  }
+  if (m === 'gemini-3.7-flash') {
+    return 'gemini-3.7-flash';
   }
   return model;
 }
@@ -158,13 +173,13 @@ export function parseApiErrorMessage(provider: string, err: any, rawResponseText
 
   if (provider === 'gemini') {
     if (lower.includes('api_key_invalid') || lower.includes('invalid api key') || lower.includes('api key not valid') || lower.includes('api_key') || (lower.includes('400') && lower.includes('key'))) {
-      return 'Invalid Gemini API Key. Please verify your key (starts with "AQ." or "AIzaSy...") at https://aistudio.google.com/app/apikey or click "Use Free Built-in AI".';
+      return 'Invalid Gemini API Key. Please verify your key (starts with "AQ." or "AIzaSy...") at https://aistudio.google.com/app/apikey or leave empty to use built-in AI.';
     }
     if (lower.includes('503') || lower.includes('high demand') || lower.includes('unavailable')) {
       return 'Google Gemini model is experiencing high demand (503). Retrying with active model...';
     }
     if (lower.includes('429') || lower.includes('quota') || lower.includes('resource_exhausted')) {
-      return 'Gemini API quota or rate limit exceeded (429). Switching to backup model or please wait a moment.';
+      return 'Gemini API Rate limit reached (429). The system automatically throttles and retries with backup models (Gemini Flash Lite) or you can try again in a few moments.';
     }
     if (lower.includes('permission_denied') || lower.includes('403')) {
       return 'Permission denied for this Gemini API key. Ensure Generative Language API is enabled or use free built-in AI.';
@@ -226,7 +241,7 @@ export async function testAiKeyDirectly(
     }
 
     const testModel = normalizeGeminiModel(model);
-    const candidateModels = Array.from(new Set([testModel, 'gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gemini-3.7-flash', 'gemini-flash-latest', 'gemini-3.1-pro-preview']));
+    const candidateModels = Array.from(new Set([testModel, 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.1-pro-preview']));
 
     let lastError: any = null;
     for (const curModel of candidateModels) {
@@ -262,7 +277,7 @@ export async function testAiKeyDirectly(
       } catch (err: any) {
         lastError = err;
         const errMsg = String(err?.message || '').toLowerCase();
-        // If it's a transient 503, 404, 429, timeout or network issue, try next model candidate
+        // If it's a transient 503, 404, 429, timeout or network issue, wait a moment and try next model candidate
         if (
           errMsg.includes('503') ||
           errMsg.includes('unavailable') ||
@@ -276,6 +291,7 @@ export async function testAiKeyDirectly(
           errMsg.includes('failed to fetch') ||
           errMsg.includes('network')
         ) {
+          await new Promise((r) => setTimeout(r, 800));
           continue;
         }
         break;
@@ -412,6 +428,8 @@ export async function generateGeminiMetadataDirectly(options: {
   base64Data: string;
   mimeType?: string;
   filename: string;
+  fileHash?: string;
+  timestamp?: string;
   keywordCount?: number;
   customPromptHint?: string;
   vectorSemanticText?: string;
@@ -420,10 +438,12 @@ export async function generateGeminiMetadataDirectly(options: {
 }): Promise<DirectMetadataResult> {
   const {
     apiKey,
-    model = 'gemini-3.7-flash',
+    model = 'gemini-3.5-flash',
     base64Data,
     mimeType = 'image/jpeg',
     filename,
+    fileHash: clientFileHash,
+    timestamp: clientTimestamp,
     keywordCount = 49,
     customPromptHint = '',
     vectorSemanticText = '',
@@ -435,22 +455,67 @@ export async function generateGeminiMetadataDirectly(options: {
     throw new Error('Gemini API key is missing. Please set your key in AI Settings.');
   }
 
+  const timestamp = clientTimestamp || new Date().toISOString();
+
   let cleanBase64 = String(base64Data || '').trim();
   if (cleanBase64.includes(',')) {
     cleanBase64 = cleanBase64.split(',')[1].trim();
   }
   cleanBase64 = cleanBase64.replace(/[\r\n\s]/g, '');
 
+  let fileHash = clientFileHash;
+  if (!fileHash) {
+    const seed = `${filename || 'file'}_${timestamp}_${cleanBase64.slice(0, 500)}_${cleanBase64.length}`;
+    let hashNum = 0;
+    for (let i = 0; i < seed.length; i++) {
+      hashNum = (hashNum << 5) - hashNum + seed.charCodeAt(i);
+      hashNum |= 0;
+    }
+    fileHash =
+      Math.abs(hashNum).toString(16).padStart(8, '0').toUpperCase() +
+      Math.floor(Math.random() * 65535)
+        .toString(16)
+        .padStart(4, '0')
+        .toUpperCase();
+  }
+
   const isVector = /\.(eps|ai|svg|pdf|cdr|ps)$/i.test(filename || '') || (mimeType && mimeType.includes('svg'));
-  const isRealVisual = isRealArtworkPreview !== false;
-  const hasImage = cleanBase64.length > 50 && isRealVisual;
+  let isRealVisual = isRealArtworkPreview !== false;
+  let isRasterImage =
+    cleanBase64.startsWith('/9j/') ||
+    cleanBase64.startsWith('iVBOR') ||
+    cleanBase64.startsWith('R0lGOD') ||
+    cleanBase64.startsWith('UklGR');
+
+  // If vector file and cleanBase64 is raw vector text/binary, try rasterization call
+  if (isVector && (!isRasterImage || !isRealVisual) && cleanBase64.length > 50) {
+    try {
+      const renderRes = await fetch('/api/render-vector', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename, fileData: cleanBase64 }),
+      });
+      if (renderRes.ok) {
+        const renderData = await renderRes.json();
+        if (renderData.success && renderData.base64Data) {
+          cleanBase64 = renderData.base64Data;
+          isRasterImage = true;
+          isRealVisual = true;
+        }
+      }
+    } catch (e) {
+      console.warn('Direct service vector rendering fetch error:', e);
+    }
+  }
+
+  const hasImage = cleanBase64.length > 50 && isRealVisual && isRasterImage;
 
   if (!hasImage && !isVector && cleanBase64.length <= 50) {
     throw new Error('Missing image data for AI processing.');
   }
 
   const selectedModel = normalizeGeminiModel(model);
-  const candidateModels = Array.from(new Set([selectedModel, 'gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gemini-3.7-flash', 'gemini-flash-latest', 'gemini-3.1-pro-preview']));
+  const candidateModels = Array.from(new Set([selectedModel, 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.6-flash', 'gemini-3.7-flash']));
   const targetKwCount = Math.max(25, Math.min(49, keywordCount || 49));
   const safeMime = mimeType?.startsWith('image/') ? mimeType.split(';')[0].trim() : 'image/jpeg';
 
@@ -472,6 +537,12 @@ DEEP VISUAL & CONTENT ANALYSIS REQUIREMENTS:
 3. Content-Accurate Focus: Base your metadata on what is VISIBLE in the artwork or detailed in the vector properties. Do NOT invent unrelated tags.
 4. Commercial Use Cases: Identify intended applications (web graphics, UI icons, banners, packaging, posters, branding).
 
+CRITICAL BATCH UNICITY & COPYRIGHT COMPLIANCE MANDATE:
+- You MUST generate 100% original, creative, and visually content-accurate titles and descriptions for every asset to strictly avoid copyright infringement, trademark flags, or duplicate content penalties across microstock agencies (Adobe Stock, Shutterstock, Freepik, Getty Images).
+- Incorporate the unique visual content along with the file's unique fingerprint (Hash: ${fileHash}, Timestamp: ${timestamp}) to ensure that even for batch uploads of visually similar artworks or vector variants, every title and description is completely distinct and original.
+- NEVER reuse duplicate title templates, repetitive phrasing, or identical descriptions across files in a batch upload. Every title MUST be unique, 60-90 characters, commercial, packed with relevant keywords, and strictly free of commas.
+- Do NOT base titles merely on generic filenames like "001.eps" or "002.eps"; ignore generic file numbers and analyze the actual visual content in deep detail.
+
 STRICT MICROSTOCK REQUIREMENTS:
 1. Title: 60-90 characters. Descriptive, commercial, packed with top search keywords describing the actual visual content. Strictly NO COMMAS anywhere (Adobe Stock rule).
 2. Description: 1-2 clean sentences accurately describing the visual elements, style, and design utility.
@@ -479,6 +550,8 @@ STRICT MICROSTOCK REQUIREMENTS:
 4. Category: Best matching microstock category (e.g., Graphic Resources, Backgrounds/Textures, Transportation, Abstract, Business, Technology, Food, Lifestyle).
 
 Filename: "${filename}"
+Unique File Fingerprint (SHA256 Hash Seed): ${fileHash}
+Processing Timestamp: ${timestamp}
 ${cleanSubject ? `Primary Subject: "${cleanSubject}"` : ''}
 ${isVector ? `Asset Format: Scalable Vector Graphic / Artwork Asset.` : ''}
 ${vectorSemanticText ? `\n--- EMBEDDED VECTOR FILE PROPERTIES & METADATA ---\n${vectorSemanticText}\n-----------------------------------------------` : ''}
@@ -581,11 +654,15 @@ JSON Response Format:
         errMsg.includes('high demand') ||
         errMsg.includes('not found') ||
         errMsg.includes('404') ||
-        errMsg.includes('429')
+        errMsg.includes('429') ||
+        errMsg.includes('quota') ||
+        errMsg.includes('resource_exhausted')
       ) {
+        await new Promise((r) => setTimeout(r, 1000));
         continue;
       }
       // If parsing failed or single request failed, try next model as fallback
+      await new Promise((r) => setTimeout(r, 500));
       continue;
     }
   }

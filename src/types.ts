@@ -44,6 +44,7 @@ export interface StockFile {
   isRealArtworkPreview?: boolean; // True if preview is authentic visual artwork (not a synthetic badge)
   vectorSemanticText?: string; // Embedded metadata, layer names, text elements from vector
   cleanSubject?: string; // Human-friendly subject extracted from file
+  fileHash?: string; // Unique file fingerprint hash
   status: FileStatus;
   title: string;
   description: string;
