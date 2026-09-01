@@ -414,8 +414,22 @@ export async function generateGeminiMetadataDirectly(options: {
   filename: string;
   keywordCount?: number;
   customPromptHint?: string;
+  vectorSemanticText?: string;
+  isRealArtworkPreview?: boolean;
+  cleanSubject?: string;
 }): Promise<DirectMetadataResult> {
-  const { apiKey, model = 'gemini-3.7-flash', base64Data, mimeType = 'image/jpeg', filename, keywordCount = 49, customPromptHint = '' } = options;
+  const {
+    apiKey,
+    model = 'gemini-3.7-flash',
+    base64Data,
+    mimeType = 'image/jpeg',
+    filename,
+    keywordCount = 49,
+    customPromptHint = '',
+    vectorSemanticText = '',
+    isRealArtworkPreview,
+    cleanSubject: clientCleanSubject,
+  } = options;
 
   if (!apiKey?.trim()) {
     throw new Error('Gemini API key is missing. Please set your key in AI Settings.');
@@ -428,9 +442,10 @@ export async function generateGeminiMetadataDirectly(options: {
   cleanBase64 = cleanBase64.replace(/[\r\n\s]/g, '');
 
   const isVector = /\.(eps|ai|svg|pdf|cdr|ps)$/i.test(filename || '') || (mimeType && mimeType.includes('svg'));
-  const hasImage = cleanBase64.length > 50;
+  const isRealVisual = isRealArtworkPreview !== false;
+  const hasImage = cleanBase64.length > 50 && isRealVisual;
 
-  if (!hasImage && !isVector) {
+  if (!hasImage && !isVector && cleanBase64.length <= 50) {
     throw new Error('Missing image data for AI processing.');
   }
 
@@ -439,22 +454,23 @@ export async function generateGeminiMetadataDirectly(options: {
   const targetKwCount = Math.max(25, Math.min(49, keywordCount || 49));
   const safeMime = mimeType?.startsWith('image/') ? mimeType.split(';')[0].trim() : 'image/jpeg';
 
-  const cleanSubject = filename
+  const cleanSubject = clientCleanSubject || (filename
     ? filename
         .replace(/\.[^/.]+$/, '')
         .replace(/^create[_\s-]+/i, '')
         .replace(/_\d{8,}(?:_\d+)?/g, '')
         .replace(/[-_]+/g, ' ')
         .trim()
-    : '';
+    : '');
 
   const promptText = `You are a world-class Stock Media Metadata & SEO Specialist for Adobe Stock, Shutterstock, Freepik, Getty Images, and Vecteezy.
-Analyze the provided visual artwork / image in extreme visual detail and generate high-converting microstock SEO metadata as valid JSON.
+Analyze the provided visual artwork or vector illustration in extreme detail and generate high-converting microstock SEO metadata as valid JSON.
 
-DEEP VISUAL CONTENT ANALYSIS REQUIREMENTS:
-1. Visual Content & Objects: Examine the rendered visual artwork carefully. Identify the exact objects, vector illustrations, icons, characters, symbols, textures, badges, background elements, art style (flat, 3D, line art, isometric, vintage, modern), and color palette present in the image.
-2. Content-Accurate Focus: Base your metadata 100% on what is VISIBLE in the image. Do NOT guess or rely solely on the filename.
-3. Commercial Use Cases: Identify intended applications (web graphics, UI icons, banners, packaging, posters, branding).
+DEEP VISUAL & CONTENT ANALYSIS REQUIREMENTS:
+1. Visual Content & Objects: Examine the rendered visual artwork or vector properties carefully. Identify the exact objects, vector illustrations, icons, characters, symbols, textures, badges, background elements, art style (flat, 3D, line art, isometric, vintage, modern), and color palette.
+2. Vector File Subject Rule: If this is an EPS/AI vector graphic, generate metadata describing the actual subject matter and visual objects. NEVER output metadata describing an "EPS file", "EPS badge", or "file icon".
+3. Content-Accurate Focus: Base your metadata on what is VISIBLE in the artwork or detailed in the vector properties. Do NOT invent unrelated tags.
+4. Commercial Use Cases: Identify intended applications (web graphics, UI icons, banners, packaging, posters, branding).
 
 STRICT MICROSTOCK REQUIREMENTS:
 1. Title: 60-90 characters. Descriptive, commercial, packed with top search keywords describing the actual visual content. Strictly NO COMMAS anywhere (Adobe Stock rule).
@@ -463,7 +479,9 @@ STRICT MICROSTOCK REQUIREMENTS:
 4. Category: Best matching microstock category (e.g., Graphic Resources, Backgrounds/Textures, Transportation, Abstract, Business, Technology, Food, Lifestyle).
 
 Filename: "${filename}"
+${cleanSubject ? `Primary Subject: "${cleanSubject}"` : ''}
 ${isVector ? `Asset Format: Scalable Vector Graphic / Artwork Asset.` : ''}
+${vectorSemanticText ? `\n--- EMBEDDED VECTOR FILE PROPERTIES & METADATA ---\n${vectorSemanticText}\n-----------------------------------------------` : ''}
 ${customPromptHint ? `Custom Guidance: ${customPromptHint}` : ''}
 
 JSON Response Format:

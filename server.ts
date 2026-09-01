@@ -677,6 +677,9 @@ app.post('/api/generate-metadata', async (req, res) => {
       filename,
       keywordCount = 49,
       customPromptHint,
+      vectorSemanticText,
+      isRealArtworkPreview,
+      cleanSubject: clientCleanSubject,
     } = req.body;
 
     let cleanBase64 = String(base64Data || '').trim();
@@ -686,7 +689,8 @@ app.post('/api/generate-metadata', async (req, res) => {
     cleanBase64 = cleanBase64.replace(/[\r\n\s]/g, '');
 
     const isVector = /\.(eps|ai|svg|pdf|cdr|ps)$/i.test(filename || '') || (mimeType && mimeType.includes('svg'));
-    let hasImage = cleanBase64.length > 50;
+    const isRealVisual = isRealArtworkPreview !== false;
+    let hasImage = cleanBase64.length > 50 && isRealVisual;
 
     // If raw vector payload was passed instead of pre-rendered image, attempt on-the-fly rendering
     if (isVector && cleanBase64.length > 0 && (!mimeType || mimeType.includes('postscript') || mimeType.includes('pdf'))) {
@@ -702,7 +706,7 @@ app.post('/api/generate-metadata', async (req, res) => {
       }
     }
 
-    if (!hasImage && !isVector) {
+    if (!hasImage && !isVector && cleanBase64.length <= 50) {
       return res.status(400).json({
         success: false,
         error: 'Missing base64Data image payload for visual analysis',
@@ -720,22 +724,23 @@ app.post('/api/generate-metadata', async (req, res) => {
 
     const targetKwCount = Math.max(25, Math.min(49, keywordCount || 49));
 
-    const cleanSubject = filename
+    const cleanSubject = clientCleanSubject || (filename
       ? filename
           .replace(/\.[^/.]+$/, '')
           .replace(/^create[_\s-]+/i, '')
           .replace(/_\d{8,}(?:_\d+)?/g, '')
           .replace(/[-_]+/g, ' ')
           .trim()
-      : '';
+      : '');
 
     const systemInstruction = `You are a world-class Stock Media SEO Specialist & Keywording Expert for Adobe Stock, Shutterstock, Freepik, Getty Images, and Vecteezy.
 Analyze the provided visual asset (photo, texture, vector illustration, icon set, 3D render, or graphic) in extreme visual detail and generate high-converting, strictly compliant commercial SEO metadata in valid JSON format.
 
-DEEP VISUAL ANALYSIS REQUIREMENTS:
-1. Visual Content & Main Subjects: Thoroughly examine the visual artwork/image. Identify the exact objects, design style, vector illustrations, badges, icons, typography, shapes, symbols, background scenery, and color palette present in the artwork.
-2. Concept & Mood: Identify practical concepts, industries, and intended use cases (e.g. web banners, posters, mobile UI, packaging, advertising, branding).
-3. Composition & Art Style: Recognize whether it is flat vector art, isometric, vintage emblem, line art, modern minimalist, geometric pattern, or 3D render.
+DEEP VISUAL & CONTENT ANALYSIS REQUIREMENTS:
+1. Visual Content & Main Subjects: Thoroughly examine the visual artwork/image or vector properties. Identify the exact objects, design style, vector illustrations, badges, icons, typography, shapes, symbols, background scenery, and color palette present in the artwork.
+2. Vector Graphics Rule: If analyzing a vector graphic or EPS/AI file, generate metadata describing the actual subject matter and visual objects. NEVER generate metadata about an "EPS file", "EPS badge", or "file icon".
+3. Concept & Mood: Identify practical concepts, industries, and intended use cases (e.g. web banners, posters, mobile UI, packaging, advertising, branding).
+4. Composition & Art Style: Recognize whether it is flat vector art, isometric, vintage emblem, line art, modern minimalist, geometric pattern, or 3D render.
 
 STRICT MICROSTOCK COMPLIANCE RULES:
 - Title: Exactly ONE clear, highly descriptive, commercial sentence (60-90 characters) describing the EXACT visual content in the image. Packed with top search keywords. Strictly NEVER include commas in the title (Adobe Stock forbids commas). No quotation marks.
@@ -756,12 +761,14 @@ JSON Response Schema:
   "category_guess": "Graphic Resources"
 }`;
 
-    const promptText = `Analyze the visual content of this artwork in complete detail.
-Filename: "${filename || 'stock_media'}".
+    const promptText = `Analyze the content and visual design of this artwork in complete detail.
+Filename: "${filename || 'stock_media'}"
+${cleanSubject ? `Primary Subject: "${cleanSubject}"` : ''}
 ${isVector ? `Asset Format: Scalable Vector Graphic / Vector Artwork Asset.` : ''}
+${vectorSemanticText ? `\n--- EMBEDDED VECTOR FILE PROPERTIES & METADATA ---\n${vectorSemanticText}\n-----------------------------------------------` : ''}
 Target Keyword Count: Exactly ${targetKwCount} unique keywords.
 ${customPromptHint ? `Custom Guidance: ${customPromptHint}` : ''}
-Inspect the visual image carefully and generate premium, 100% content-accurate microstock SEO metadata as valid JSON.`;
+Inspect the artwork carefully and generate premium, 100% content-accurate microstock SEO metadata as valid JSON.`;
 
     let resultText = '';
 

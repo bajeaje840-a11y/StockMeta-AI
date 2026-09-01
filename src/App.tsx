@@ -118,17 +118,31 @@ export default function App() {
         let base64Data = file.base64Data;
         let mimeTypeForAi = file.mimeTypeForAi;
         let previewUrl = file.previewUrl;
+        let isRealArtworkPreview = file.isRealArtworkPreview;
+        let vectorSemanticText = file.vectorSemanticText;
+        let cleanSubject = file.cleanSubject;
 
-        if ((!base64Data || !previewUrl) && file.file) {
+        if ((!base64Data || !previewUrl || file.isRealArtworkPreview === undefined) && file.file) {
           const prep = await prepareFileForAi(file.file);
           base64Data = prep.base64Data;
           mimeTypeForAi = prep.mimeTypeForAi;
           previewUrl = prep.previewUrl;
+          isRealArtworkPreview = prep.isRealArtworkPreview;
+          vectorSemanticText = prep.vectorSemanticText;
+          cleanSubject = prep.cleanSubject;
 
           setFiles((prev) =>
             prev.map((f) =>
               f.id === file.id
-                ? { ...f, base64Data, mimeTypeForAi, previewUrl }
+                ? {
+                    ...f,
+                    base64Data,
+                    mimeTypeForAi,
+                    previewUrl,
+                    isRealArtworkPreview,
+                    vectorSemanticText,
+                    cleanSubject,
+                  }
                 : f
             )
           );
@@ -163,6 +177,9 @@ export default function App() {
               filename: file.name,
               keywordCount: aiConfig.keywordCount || 49,
               customPromptHint: aiConfig.customInstructions || '',
+              vectorSemanticText,
+              isRealArtworkPreview,
+              cleanSubject,
             }),
           });
 
@@ -202,11 +219,14 @@ export default function App() {
               const directResult = await generateGeminiMetadataDirectly({
                 apiKey: creds.apiKey.trim(),
                 model: creds.model || 'gemini-3.7-flash',
-                base64Data,
+                base64Data: base64Data || '',
                 mimeType: mimeTypeForAi,
                 filename: file.name,
                 keywordCount: aiConfig.keywordCount || 40,
                 customPromptHint: aiConfig.customInstructions || '',
+                vectorSemanticText,
+                isRealArtworkPreview,
+                cleanSubject,
               });
 
               meta = {
@@ -383,6 +403,9 @@ export default function App() {
                       previewUrl: prep.previewUrl || f.previewUrl,
                       base64Data: prep.base64Data || f.base64Data,
                       mimeTypeForAi: prep.mimeTypeForAi || f.mimeTypeForAi,
+                      isRealArtworkPreview: prep.isRealArtworkPreview,
+                      vectorSemanticText: prep.vectorSemanticText,
+                      cleanSubject: prep.cleanSubject,
                     }
                   : f
               )

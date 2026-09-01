@@ -41,6 +41,9 @@ export interface StockFile {
   previewUrl: string;
   base64Data?: string; // For sending to AI
   mimeTypeForAi: string; // e.g. "image/jpeg" or "image/png"
+  isRealArtworkPreview?: boolean; // True if preview is authentic visual artwork (not a synthetic badge)
+  vectorSemanticText?: string; // Embedded metadata, layer names, text elements from vector
+  cleanSubject?: string; // Human-friendly subject extracted from file
   status: FileStatus;
   title: string;
   description: string;
