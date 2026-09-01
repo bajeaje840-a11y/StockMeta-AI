@@ -113,7 +113,7 @@ export function sanitizeMicrostockMetadata(parsed: any, filename: string): {
 }
 
 export function normalizeGeminiModel(model?: string): string {
-  if (!model) return 'gemini-3.7-flash';
+  if (!model) return 'gemini-3.6-flash';
   const m = model.toLowerCase().trim();
   if (
     m === 'gemini-2.5-flash' ||
@@ -122,7 +122,7 @@ export function normalizeGeminiModel(model?: string): string {
     m === 'gemini-flash' ||
     m === 'flash'
   ) {
-    return 'gemini-3.7-flash';
+    return 'gemini-3.6-flash';
   }
   if (
     m === 'gemini-2.5-pro' ||
@@ -141,7 +141,7 @@ export function normalizeGeminiModel(model?: string): string {
  */
 export function parseApiErrorMessage(provider: string, err: any, rawResponseText?: string): string {
   let msg = (err?.message || String(err || '')).trim();
-  if (rawResponseText && rawResponseText.length < 1000) {
+  if (rawResponseText && rawResponseText.length < 3000) {
     try {
       const parsed = JSON.parse(rawResponseText);
       if (parsed.error?.message) {
@@ -157,14 +157,14 @@ export function parseApiErrorMessage(provider: string, err: any, rawResponseText
   const lower = msg.toLowerCase();
 
   if (provider === 'gemini') {
-    if (lower.includes('api_key_invalid') || lower.includes('invalid api key') || lower.includes('api key not valid') || lower.includes('api_key') || lower.includes('400') || lower.includes('bad request')) {
+    if (lower.includes('api_key_invalid') || lower.includes('invalid api key') || lower.includes('api key not valid') || lower.includes('api_key') || (lower.includes('400') && lower.includes('key'))) {
       return 'Invalid Gemini API Key. Please verify your key (starts with "AQ." or "AIzaSy...") at https://aistudio.google.com/app/apikey or click "Use Free Built-in AI".';
     }
     if (lower.includes('503') || lower.includes('high demand') || lower.includes('unavailable')) {
-      return 'Google Gemini model is temporarily busy (503). Retrying automatically with backup model...';
+      return 'Google Gemini model is experiencing high demand (503). Retrying with active model...';
     }
     if (lower.includes('429') || lower.includes('quota') || lower.includes('resource_exhausted')) {
-      return 'Gemini API Rate limit or quota reached (429). Please wait a few moments or use a paid/different API key.';
+      return 'Gemini API quota or rate limit exceeded (429). Switching to backup model or please wait a moment.';
     }
     if (lower.includes('permission_denied') || lower.includes('403')) {
       return 'Permission denied for this Gemini API key. Ensure Generative Language API is enabled or use free built-in AI.';
@@ -226,7 +226,7 @@ export async function testAiKeyDirectly(
     }
 
     const testModel = normalizeGeminiModel(model);
-    const candidateModels = Array.from(new Set([testModel, 'gemini-3.7-flash', 'gemini-flash-latest', 'gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gemini-3.1-pro-preview']));
+    const candidateModels = Array.from(new Set([testModel, 'gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gemini-3.7-flash', 'gemini-flash-latest', 'gemini-3.1-pro-preview']));
 
     let lastError: any = null;
     for (const curModel of candidateModels) {
@@ -270,6 +270,8 @@ export async function testAiKeyDirectly(
           errMsg.includes('not found') ||
           errMsg.includes('404') ||
           errMsg.includes('429') ||
+          errMsg.includes('quota') ||
+          errMsg.includes('resource_exhausted') ||
           errMsg.includes('timeout') ||
           errMsg.includes('failed to fetch') ||
           errMsg.includes('network')
@@ -433,7 +435,7 @@ export async function generateGeminiMetadataDirectly(options: {
   }
 
   const selectedModel = normalizeGeminiModel(model);
-  const candidateModels = Array.from(new Set([selectedModel, 'gemini-3.7-flash', 'gemini-flash-latest', 'gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gemini-3.1-pro-preview']));
+  const candidateModels = Array.from(new Set([selectedModel, 'gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gemini-3.7-flash', 'gemini-flash-latest', 'gemini-3.1-pro-preview']));
   const targetKwCount = Math.max(25, Math.min(49, keywordCount || 49));
   const safeMime = mimeType?.startsWith('image/') ? mimeType.split(';')[0].trim() : 'image/jpeg';
 

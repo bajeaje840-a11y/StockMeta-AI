@@ -200,7 +200,7 @@ app.get('/api/key-status', (req, res) => {
 });
 
 function normalizeGeminiModel(model?: string): string {
-  if (!model) return 'gemini-3.7-flash';
+  if (!model) return 'gemini-3.6-flash';
   const m = model.toLowerCase().trim();
   if (
     m === 'gemini-2.5-flash' ||
@@ -209,7 +209,7 @@ function normalizeGeminiModel(model?: string): string {
     m === 'gemini-flash' ||
     m === 'flash'
   ) {
-    return 'gemini-3.7-flash';
+    return 'gemini-3.6-flash';
   }
   if (
     m === 'gemini-2.5-pro' ||
@@ -331,10 +331,10 @@ app.post('/api/test-key', async (req, res) => {
       const testModel = normalizeGeminiModel(model);
       const candidateModels = Array.from(new Set([
         testModel,
-        'gemini-3.7-flash',
-        'gemini-flash-latest',
         'gemini-3.6-flash',
         'gemini-3.1-flash-lite',
+        'gemini-3.7-flash',
+        'gemini-flash-latest',
         'gemini-3.1-pro-preview',
       ]));
       
@@ -772,10 +772,10 @@ Inspect the visual image carefully and generate premium, 100% content-accurate m
       const selectedModel = normalizeGeminiModel(model);
       const candidateModels = Array.from(new Set([
         selectedModel,
-        'gemini-3.7-flash',
-        'gemini-flash-latest',
         'gemini-3.6-flash',
         'gemini-3.1-flash-lite',
+        'gemini-3.7-flash',
+        'gemini-flash-latest',
         'gemini-3.1-pro-preview',
       ]));
       const keyPool = getApiKeyPool();
@@ -870,13 +870,16 @@ Inspect the visual image carefully and generate premium, 100% content-accurate m
               }
             }
 
-            // If it's a 503, 404, 429, timeout or fetch error, retry after slight delay or switch model
+            // If it's a 503, 404, 429, quota, timeout or fetch error, switch to next candidate model
             if (
               errStr.includes('503') ||
               errStr.includes('unavailable') ||
               errStr.includes('high demand') ||
               errStr.includes('404') ||
               errStr.includes('not found') ||
+              errStr.includes('429') ||
+              errStr.includes('quota') ||
+              errStr.includes('resource_exhausted') ||
               errStr.includes('timeout') ||
               errStr.includes('fetch failed') ||
               errStr.includes('headers timeout') ||
