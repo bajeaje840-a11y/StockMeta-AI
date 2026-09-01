@@ -1,8 +1,9 @@
 /**
  * Client-Side PostScript & EPS Vector Artwork Rasterizer
  * 
- * Capable of interpreting PostScript Level 1, 2, and 3 EPS vector files directly
- * in the browser without any server-side dependencies (works 100% on Vercel, static SPA, offline).
+ * Specially optimized for Adobe Illustrator 10 / 8 / CS / CC EPS and PostScript files.
+ * Capable of interpreting vector paths, CMYK/RGB/Spot colors, compound shapes, and text
+ * directly in the browser with zero server dependencies.
  */
 
 export interface RenderedVectorResult {
@@ -26,11 +27,12 @@ interface BoundingBox {
  * Extracts BoundingBox or HiResBoundingBox from PostScript header comments
  */
 export function extractBoundingBox(psText: string): BoundingBox | null {
-  // Check %%HiResBoundingBox first, then %%BoundingBox
+  // Check %%HiResBoundingBox first, then %%BoundingBox, then %AI5_ArtBounds:
   const hiresMatch = psText.match(/%%HiResBoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i);
   const bboxMatch = psText.match(/%%BoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i);
+  const artBoundsMatch = psText.match(/%AI5_ArtBounds:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i);
 
-  const match = hiresMatch || bboxMatch;
+  const match = hiresMatch || bboxMatch || artBoundsMatch;
   if (!match) return null;
 
   const minX = parseFloat(match[1]);
@@ -41,8 +43,8 @@ export function extractBoundingBox(psText: string): BoundingBox | null {
   const width = Math.abs(maxX - minX);
   const height = Math.abs(maxY - minY);
 
-  if (width > 0 && height > 0 && !isNaN(width) && !isNaN(height)) {
-    return { minX, minY, maxX, maxY, width, height };
+  if (width > 0 && height > 0 && !isNaN(width) && !isNaN(height) && width < 100000 && height < 100000) {
+    return { minX: Math.min(minX, maxX), minY: Math.min(minY, maxY), maxX: Math.max(minX, maxX), maxY: Math.max(minY, maxY), width, height };
   }
   return null;
 }
@@ -51,20 +53,25 @@ export function extractBoundingBox(psText: string): BoundingBox | null {
  * Converts CMYK values (0..1) to RGB (0..255)
  */
 function cmykToRgb(c: number, m: number, y: number, k: number): [number, number, number] {
-  const r = Math.round(255 * (1 - Math.min(1, c * (1 - k) + k)));
-  const g = Math.round(255 * (1 - Math.min(1, m * (1 - k) + k)));
-  const b = Math.round(255 * (1 - Math.min(1, y * (1 - k) + k)));
+  const clamp = (v: number) => Math.max(0, Math.min(1, isNaN(v) ? 0 : v));
+  const cClean = clamp(c);
+  const mClean = clamp(m);
+  const yClean = clamp(y);
+  const kClean = clamp(k);
+
+  const r = Math.round(255 * (1 - cClean) * (1 - kClean));
+  const g = Math.round(255 * (1 - mClean) * (1 - kClean));
+  const b = Math.round(255 * (1 - yClean) * (1 - kClean));
   return [Math.max(0, Math.min(255, r)), Math.max(0, Math.min(255, g)), Math.max(0, Math.min(255, b))];
 }
 
 /**
  * Fast PostScript Tokenizer that handles DSC comments, strings, hex literals, arrays, and procedures
  */
-function tokenizePostScript(code: string): string[] {
+function tokenizePostScript(code: string, maxTokens = 120000): string[] {
   const tokens: string[] = [];
   let i = 0;
   const len = code.length;
-  const maxTokens = 30000;
 
   while (i < len && tokens.length < maxTokens) {
     const ch = code[i];
@@ -75,7 +82,7 @@ function tokenizePostScript(code: string): string[] {
       continue;
     }
 
-    // Comment
+    // Comment (% ... \n)
     if (ch === '%') {
       while (i < len && code[i] !== '\n' && code[i] !== '\r') {
         i++;
@@ -86,7 +93,7 @@ function tokenizePostScript(code: string): string[] {
     // String literal ( ... )
     if (ch === '(') {
       let depth = 1;
-      const start = i;
+      const start = i + 1;
       i++;
       while (i < len && depth > 0) {
         if (code[i] === '\\' && i + 1 < len) {
@@ -97,7 +104,7 @@ function tokenizePostScript(code: string): string[] {
         else if (code[i] === ')') depth--;
         i++;
       }
-      tokens.push(code.substring(start, i));
+      tokens.push('(' + code.substring(start, i - 1) + ')');
       continue;
     }
 
@@ -118,53 +125,43 @@ function tokenizePostScript(code: string): string[] {
       continue;
     }
 
-    // Name literal /name
-    if (ch === '/') {
-      const start = i;
-      i++;
-      while (i < len && !' \t\r\n\f%(){}[]<>/'.includes(code[i])) {
-        i++;
-      }
-      tokens.push(code.substring(start, i));
-      continue;
-    }
-
-    // Regular token / operator / number
+    // Regular token / operator / number / name literal
     const start = i;
-    while (i < len && !' \t\r\n\f%(){}[]<>/'.includes(code[i])) {
+    while (i < len && !' \t\r\n\f%(){}[]<>'.includes(code[i])) {
       i++;
     }
-    tokens.push(code.substring(start, i));
+    const tok = code.substring(start, i);
+    if (tok) tokens.push(tok);
   }
 
   return tokens;
 }
 
 /**
- * Executes PostScript vector commands on an HTML5 2D Canvas context
+ * Executes Illustrator 10 / PostScript vector commands on an HTML5 2D Canvas context
  */
 export function renderPostScriptCodeToCanvas(
   psText: string,
-  targetResolution = 1200
+  targetResolution = 1024
 ): RenderedVectorResult | null {
   try {
     if (!psText || psText.length < 20) return null;
 
-    // 1. Get BoundingBox or auto-compute
+    // 1. Get BoundingBox or auto-compute from coordinates
     let bbox = extractBoundingBox(psText);
-    const tokens = tokenizePostScript(psText);
+    const tokens = tokenizePostScript(psText, 120000);
 
     if (tokens.length < 5) return null;
 
-    // Scan for path extremes if bounding box is missing
-    if (!bbox) {
+    // Scan for path extremes if bounding box is missing or invalid
+    if (!bbox || bbox.width <= 0 || bbox.height <= 0) {
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (let idx = 0; idx < tokens.length; idx++) {
         const tok = tokens[idx];
-        if (tok === 'moveto' || tok === 'm' || tok === 'lineto' || tok === 'l') {
+        if (tok === 'moveto' || tok === 'm' || tok === '_m' || tok === 'lineto' || tok === 'l' || tok === '_l') {
           const x = parseFloat(tokens[idx - 2]);
           const y = parseFloat(tokens[idx - 1]);
-          if (!isNaN(x) && !isNaN(y) && Math.abs(x) < 50000 && Math.abs(y) < 50000) {
+          if (!isNaN(x) && !isNaN(y) && Math.abs(x) < 20000 && Math.abs(y) < 20000) {
             minX = Math.min(minX, x);
             minY = Math.min(minY, y);
             maxX = Math.max(maxX, x);
@@ -176,19 +173,18 @@ export function renderPostScriptCodeToCanvas(
       if (minX !== Infinity && maxX > minX && maxY > minY) {
         bbox = { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
       } else {
-        // Standard default PostScript page dimensions (Letter: 612x792, or Square 800x800)
+        // Standard default PostScript page dimensions (Square 800x800)
         bbox = { minX: 0, minY: 0, maxX: 800, maxY: 800, width: 800, height: 800 };
       }
     }
 
-    // Compute target canvas aspect ratio
+    // Compute target canvas aspect ratio with slight 2% margin
+    const margin = 0.02;
     const srcW = Math.max(10, bbox.width);
     const srcH = Math.max(10, bbox.height);
     const scale = Math.min(targetResolution / Math.max(srcW, srcH), 3.0);
-    const canvasW = Math.round(srcW * scale);
-    const canvasH = Math.round(srcH * scale);
-
-    if (canvasW <= 0 || canvasH <= 0 || canvasW > 4096 || canvasH > 4096) return null;
+    const canvasW = Math.max(100, Math.min(2048, Math.round(srcW * scale)));
+    const canvasH = Math.max(100, Math.min(2048, Math.round(srcH * scale)));
 
     const canvas = document.createElement('canvas');
     canvas.width = canvasW;
@@ -204,126 +200,49 @@ export function renderPostScriptCodeToCanvas(
 
     // 3. Coordinate System Setup: PostScript origin is Bottom-Left; Canvas is Top-Left
     ctx.save();
-    ctx.scale(scale, scale);
-    ctx.translate(-bbox.minX, bbox.minY + srcH);
-    ctx.scale(1, -1); // Invert Y axis
+    ctx.scale(scale * (1 - margin * 2), scale * (1 - margin * 2));
+    ctx.translate(
+      -bbox.minX + (srcW * margin) / (1 - margin * 2),
+      bbox.minY + srcH - (srcH * margin) / (1 - margin * 2)
+    );
+    ctx.scale(1, -1); // Invert Y axis for PostScript
 
     // PostScript Execution State & Stack
     const stack: any[] = [];
-    const dict: Record<string, string | ((...args: any[]) => void)> = {
-      // Standard PostScript Shorthand Dictionary mappings
-      m: 'moveto',
-      l: 'lineto',
-      c: 'curveto',
-      v: 'curvetov',
-      y: 'curvetoy',
-      h: 'closepath',
-      cp: 'closepath',
-      e: 'closepath',
-      f: 'fill',
-      F: 'fill',
-      'f*': 'eofill',
-      s: 'stroke',
-      S: 'stroke',
-      b: 'fillstroke',
-      B: 'fillstroke',
-      'b*': 'eofillstroke',
-      'B*': 'eofillstroke',
-      n: 'newpath',
-      N: 'newpath',
-      q: 'gsave',
-      Q: 'grestore',
-      w: 'setlinewidth',
-      J: 'setlinecap',
-      j: 'setlinejoin',
-      M: 'setmiterlimit',
-      d: 'setdash',
-      rg: 'setrgbcolor',
-      RG: 'setrgbcolor',
-      k: 'setcmykcolor',
-      K: 'setcmykcolor',
-      g: 'setgray',
-      G: 'setgray',
-      cm: 'concat',
-      re: 'rect',
-      W: 'clip',
-      'W*': 'eoclip',
-      // Adobe Illustrator specific prefixes & shorthands
-      _m: 'moveto',
-      _l: 'lineto',
-      _c: 'curveto',
-      _v: 'curvetov',
-      _y: 'curvetoy',
-      _h: 'closepath',
-      _cp: 'closepath',
-      _e: 'closepath',
-      _f: 'fill',
-      _F: 'fill',
-      '_f*': 'eofill',
-      _s: 'stroke',
-      _S: 'stroke',
-      _b: 'fillstroke',
-      _B: 'fillstroke',
-      '_b*': 'eofillstroke',
-      _n: 'newpath',
-      _N: 'newpath',
-      _q: 'gsave',
-      _Q: 'grestore',
-      _w: 'setlinewidth',
-      _J: 'setlinecap',
-      _j: 'setlinejoin',
-      _M: 'setmiterlimit',
-      _d: 'setdash',
-      _rg: 'setrgbcolor',
-      _rgb: 'setrgbcolor',
-      _xa: 'setrgbcolor',
-      _k: 'setcmykcolor',
-      _K: 'setcmykcolor',
-      _xk: 'setcmykcolor',
-      _g: 'setgray',
-      _G: 'setgray',
-      _xg: 'setgray',
-      _cm: 'concat',
-      _re: 'rect',
-      _W: 'clip',
-      '_W*': 'eoclip',
-      _ar: 'arc',
-      _arcn: 'arcn',
-      _o: 'stroke',
-      _O: 'fill',
-      _X: 'noop',
-      _x: 'noop',
-      _u: 'newpath',
-      _U: 'noop',
-      _H: 'closepath',
-    };
-
     let curR = 0, curG = 0, curB = 0;
     let curLineWidth = 1;
     let pathDrawnCount = 0;
+    let inCompoundPath = false;
 
     // Helper to evaluate an operator
-    const executeOp = (op: string) => {
-      // Check user dictionary aliasing
-      if (dict[op]) {
-        const mapped = dict[op];
-        if (typeof mapped === 'string') {
-          op = mapped;
-        }
-      } else if (op.startsWith('_')) {
-        const unPrefixed = op.substring(1);
-        if (dict[unPrefixed]) {
-          const mapped = dict[unPrefixed];
-          if (typeof mapped === 'string') op = mapped;
-        }
+    const executeOp = (rawOp: string) => {
+      let op = rawOp.startsWith('/') ? rawOp.substring(1) : rawOp;
+
+      // Handle Illustrator 10 compound path markers
+      if (op === '*u') {
+        inCompoundPath = true;
+        ctx.beginPath();
+        return;
+      }
+      if (op === '*U') {
+        inCompoundPath = false;
+        return;
       }
 
       switch (op) {
         // --- PATH CONSTRUCTION ---
+        case 'n':
+        case 'N':
+        case '_n':
+        case '_N':
         case 'newpath':
-          ctx.beginPath();
+          if (!inCompoundPath) {
+            ctx.beginPath();
+          }
           break;
 
+        case 'm':
+        case '_m':
         case 'moveto': {
           const y = parseFloat(stack.pop());
           const x = parseFloat(stack.pop());
@@ -333,6 +252,8 @@ export function renderPostScriptCodeToCanvas(
           break;
         }
 
+        case 'l':
+        case '_l':
         case 'lineto': {
           const y = parseFloat(stack.pop());
           const x = parseFloat(stack.pop());
@@ -343,6 +264,8 @@ export function renderPostScriptCodeToCanvas(
           break;
         }
 
+        case 'c':
+        case '_c':
         case 'curveto': {
           const y3 = parseFloat(stack.pop());
           const x3 = parseFloat(stack.pop());
@@ -357,6 +280,8 @@ export function renderPostScriptCodeToCanvas(
           break;
         }
 
+        case 'v':
+        case '_v':
         case 'curvetov': {
           // v operator (first control point is current point)
           const y3 = parseFloat(stack.pop());
@@ -370,6 +295,8 @@ export function renderPostScriptCodeToCanvas(
           break;
         }
 
+        case 'y':
+        case '_y':
         case 'curvetoy': {
           // y operator (last control point is current point)
           const y3 = parseFloat(stack.pop());
@@ -383,19 +310,18 @@ export function renderPostScriptCodeToCanvas(
           break;
         }
 
-        case 'rlineto': {
-          const dy = parseFloat(stack.pop());
-          const dx = parseFloat(stack.pop());
-          if (!isNaN(dx) && !isNaN(dy)) {
-            // Approximated relative line
-            // Canvas doesn't have rLineTo natively, lineTo with relative offset
-            ctx.lineTo(dx, dy);
-            pathDrawnCount++;
-          }
+        case 'h':
+        case 'H':
+        case '_h':
+        case '_H':
+        case 'cp':
+        case '_cp':
+        case 'closepath':
+          ctx.closePath();
           break;
-        }
 
-        case 'arc': {
+        case 'arc':
+        case '_ar': {
           const angle2 = (parseFloat(stack.pop()) * Math.PI) / 180;
           const angle1 = (parseFloat(stack.pop()) * Math.PI) / 180;
           const r = parseFloat(stack.pop());
@@ -408,7 +334,8 @@ export function renderPostScriptCodeToCanvas(
           break;
         }
 
-        case 'arcn': {
+        case 'arcn':
+        case '_arcn': {
           const angle2 = (parseFloat(stack.pop()) * Math.PI) / 180;
           const angle1 = (parseFloat(stack.pop()) * Math.PI) / 180;
           const r = parseFloat(stack.pop());
@@ -421,6 +348,8 @@ export function renderPostScriptCodeToCanvas(
           break;
         }
 
+        case 're':
+        case '_re':
         case 'rect': {
           const h = parseFloat(stack.pop());
           const w = parseFloat(stack.pop());
@@ -453,84 +382,81 @@ export function renderPostScriptCodeToCanvas(
           const x = parseFloat(stack.pop());
           if (!isNaN(x) && !isNaN(y) && !isNaN(w) && !isNaN(h)) {
             ctx.strokeStyle = `rgb(${curR},${curG},${curB})`;
+            ctx.lineWidth = curLineWidth;
             ctx.strokeRect(x, y, w, h);
             pathDrawnCount++;
           }
           break;
         }
 
-        case 'clip':
-          try {
-            ctx.clip('nonzero');
-          } catch {}
-          break;
-
-        case 'eoclip':
-          try {
-            ctx.clip('evenodd');
-          } catch {}
-          break;
-
-        case 'noop':
-          break;
-
-        case 'closepath':
-          ctx.closePath();
-          break;
-
-        // --- PAINTING ---
+        // --- PAINTING & FILL/STROKE ---
+        case 'f':
+        case 'F':
+        case '_f':
+        case '_F':
         case 'fill':
           ctx.fillStyle = `rgb(${curR},${curG},${curB})`;
           ctx.fill('nonzero');
-          ctx.beginPath();
+          if (!inCompoundPath) ctx.beginPath();
           break;
 
+        case 'f*':
+        case 'F*':
+        case '_f*':
+        case '_F*':
         case 'eofill':
           ctx.fillStyle = `rgb(${curR},${curG},${curB})`;
           ctx.fill('evenodd');
-          ctx.beginPath();
+          if (!inCompoundPath) ctx.beginPath();
           break;
 
+        case 's':
+        case 'S':
+        case '_s':
+        case '_S':
+        case '_o':
         case 'stroke':
           ctx.strokeStyle = `rgb(${curR},${curG},${curB})`;
           ctx.lineWidth = curLineWidth;
           ctx.stroke();
-          ctx.beginPath();
+          if (!inCompoundPath) ctx.beginPath();
           break;
 
+        case 'b':
+        case 'B':
+        case '_b':
+        case '_B':
         case 'fillstroke':
           ctx.fillStyle = `rgb(${curR},${curG},${curB})`;
-          ctx.fill();
+          ctx.fill('nonzero');
           ctx.strokeStyle = `rgb(${curR},${curG},${curB})`;
           ctx.lineWidth = curLineWidth;
           ctx.stroke();
-          ctx.beginPath();
+          if (!inCompoundPath) ctx.beginPath();
           break;
 
+        case 'b*':
+        case 'B*':
+        case '_b*':
+        case '_B*':
         case 'eofillstroke':
           ctx.fillStyle = `rgb(${curR},${curG},${curB})`;
           ctx.fill('evenodd');
           ctx.strokeStyle = `rgb(${curR},${curG},${curB})`;
           ctx.lineWidth = curLineWidth;
           ctx.stroke();
-          ctx.beginPath();
+          if (!inCompoundPath) ctx.beginPath();
           break;
 
-        // --- COLOR MANAGEMENT ---
-        case 'setrgbcolor': {
-          const b = parseFloat(stack.pop());
-          const g = parseFloat(stack.pop());
-          const r = parseFloat(stack.pop());
-          if (!isNaN(r) && !isNaN(g) && !isNaN(b)) {
-            curR = Math.round(Math.max(0, Math.min(1, r)) * 255);
-            curG = Math.round(Math.max(0, Math.min(1, g)) * 255);
-            curB = Math.round(Math.max(0, Math.min(1, b)) * 255);
-            ctx.fillStyle = `rgb(${curR},${curG},${curB})`;
-            ctx.strokeStyle = `rgb(${curR},${curG},${curB})`;
-          }
-          break;
-        }
-
+        // --- COLOR MANAGEMENT (CMYK, RGB, Gray, Spot) ---
+        case 'k':
+        case 'K':
+        case '_k':
+        case '_K':
+        case 'xk':
+        case 'Xk':
+        case '_xk':
+        case '_Xk':
         case 'setcmykcolor': {
           const k = parseFloat(stack.pop());
           const y = parseFloat(stack.pop());
@@ -547,6 +473,38 @@ export function renderPostScriptCodeToCanvas(
           break;
         }
 
+        case 'rg':
+        case 'RG':
+        case '_rg':
+        case '_RG':
+        case 'xa':
+        case 'Xa':
+        case '_xa':
+        case '_Xa':
+        case 'rgb':
+        case '_rgb':
+        case 'setrgbcolor': {
+          const b = parseFloat(stack.pop());
+          const g = parseFloat(stack.pop());
+          const r = parseFloat(stack.pop());
+          if (!isNaN(r) && !isNaN(g) && !isNaN(b)) {
+            curR = Math.round(Math.max(0, Math.min(1, r)) * 255);
+            curG = Math.round(Math.max(0, Math.min(1, g)) * 255);
+            curB = Math.round(Math.max(0, Math.min(1, b)) * 255);
+            ctx.fillStyle = `rgb(${curR},${curG},${curB})`;
+            ctx.strokeStyle = `rgb(${curR},${curG},${curB})`;
+          }
+          break;
+        }
+
+        case 'g':
+        case 'G':
+        case '_g':
+        case '_G':
+        case 'xg':
+        case 'Xg':
+        case '_xg':
+        case '_Xg':
         case 'setgray': {
           const g = parseFloat(stack.pop());
           if (!isNaN(g)) {
@@ -560,15 +518,48 @@ export function renderPostScriptCodeToCanvas(
           break;
         }
 
-        case 'setlinewidth': {
-          const w = parseFloat(stack.pop());
-          if (!isNaN(w) && w > 0) {
-            curLineWidth = w;
-            ctx.lineWidth = w;
+        // Spot / Custom Colors in Illustrator 10: (Name) tint flag c m y k _x or (Name) tint _x
+        case 'x':
+        case 'X':
+        case '_x':
+        case '_X': {
+          // Clear spot color arguments from stack safely
+          const poppedArgs: any[] = [];
+          for (let p = 0; p < 7 && stack.length > 0; p++) {
+            const item = stack.pop();
+            poppedArgs.push(item);
+            if (typeof item === 'string' && (item.startsWith('(') || item.startsWith('/'))) {
+              break;
+            }
+          }
+          // If CMYK values were in the spot color definition, extract them
+          if (poppedArgs.length >= 4) {
+            const nums = poppedArgs.filter((v) => typeof v === 'number' || !isNaN(parseFloat(v))).map(Number);
+            if (nums.length >= 4) {
+              const [rgbR, rgbG, rgbB] = cmykToRgb(nums[nums.length - 4], nums[nums.length - 3], nums[nums.length - 2], nums[nums.length - 1]);
+              curR = rgbR;
+              curG = rgbG;
+              curB = rgbB;
+              ctx.fillStyle = `rgb(${curR},${curG},${curB})`;
+              ctx.strokeStyle = `rgb(${curR},${curG},${curB})`;
+            }
           }
           break;
         }
 
+        case 'w':
+        case '_w':
+        case 'setlinewidth': {
+          const w = parseFloat(stack.pop());
+          if (!isNaN(w) && w > 0) {
+            curLineWidth = Math.max(0.5, w);
+            ctx.lineWidth = curLineWidth;
+          }
+          break;
+        }
+
+        case 'J':
+        case '_J':
         case 'setlinecap': {
           const cap = parseInt(stack.pop(), 10);
           if (cap === 0) ctx.lineCap = 'butt';
@@ -577,6 +568,8 @@ export function renderPostScriptCodeToCanvas(
           break;
         }
 
+        case 'j':
+        case '_j':
         case 'setlinejoin': {
           const join = parseInt(stack.pop(), 10);
           if (join === 0) ctx.lineJoin = 'miter';
@@ -585,11 +578,37 @@ export function renderPostScriptCodeToCanvas(
           break;
         }
 
+        case 'M':
+        case '_M':
+        case 'setmiterlimit': {
+          const m = parseFloat(stack.pop());
+          if (!isNaN(m)) ctx.miterLimit = m;
+          break;
+        }
+
+        case 'd':
+        case '_d':
+        case 'setdash': {
+          stack.pop(); // offset
+          stack.pop(); // array
+          break;
+        }
+
+        case 'i':
+        case '_i':
+        case 'setflatness':
+          stack.pop();
+          break;
+
         // --- GRAPHICS STATE & TRANSFORMS ---
+        case 'q':
+        case '_q':
         case 'gsave':
           ctx.save();
           break;
 
+        case 'Q':
+        case '_Q':
         case 'grestore':
           ctx.restore();
           break;
@@ -620,6 +639,8 @@ export function renderPostScriptCodeToCanvas(
           break;
         }
 
+        case 'cm':
+        case '_cm':
         case 'concat': {
           const f = parseFloat(stack.pop());
           const e = parseFloat(stack.pop());
@@ -633,27 +654,49 @@ export function renderPostScriptCodeToCanvas(
           break;
         }
 
-        // --- DEFINITIONS & STACK OPERATIONS ---
-        case 'def': {
-          if (stack.length >= 2) {
-            const val = stack.pop();
-            const key = stack.pop();
-            if (typeof key === 'string') {
-              const cleanKey = key.startsWith('/') ? key.substring(1) : key;
-              dict[cleanKey] = val;
+        case 'W':
+        case '_W':
+        case 'clip':
+          try {
+            ctx.clip('nonzero');
+          } catch {}
+          break;
+
+        case 'W*':
+        case '_W*':
+        case 'eoclip':
+          try {
+            ctx.clip('evenodd');
+          } catch {}
+          break;
+
+        // --- TEXT RENDERING ---
+        case 'show':
+        case 'ashow':
+        case 'widthshow':
+        case 'Tj': {
+          const strRaw = stack.pop();
+          if (typeof strRaw === 'string' && strRaw.length > 2) {
+            const cleanStr = strRaw.replace(/^\(|\)$/g, '');
+            if (cleanStr && cleanStr.length > 0) {
+              ctx.save();
+              ctx.scale(1, -1); // Un-invert for readable text
+              ctx.fillStyle = `rgb(${curR},${curG},${curB})`;
+              ctx.font = 'bold 16px sans-serif';
+              ctx.fillText(cleanStr, 0, 0);
+              ctx.restore();
             }
           }
           break;
         }
 
-        case 'dup':
-          if (stack.length > 0) {
-            stack.push(stack[stack.length - 1]);
-          }
-          break;
-
+        // --- STACK OPERATIONS ---
         case 'pop':
           stack.pop();
+          break;
+
+        case 'dup':
+          if (stack.length > 0) stack.push(stack[stack.length - 1]);
           break;
 
         case 'exch':
@@ -665,55 +708,27 @@ export function renderPostScriptCodeToCanvas(
           }
           break;
 
-        case 'add': {
-          const b = parseFloat(stack.pop());
-          const a = parseFloat(stack.pop());
-          stack.push(a + b);
-          break;
-        }
-
-        case 'sub': {
-          const b = parseFloat(stack.pop());
-          const a = parseFloat(stack.pop());
-          stack.push(a - b);
-          break;
-        }
-
-        case 'mul': {
-          const b = parseFloat(stack.pop());
-          const a = parseFloat(stack.pop());
-          stack.push(a * b);
-          break;
-        }
-
-        case 'div': {
-          const b = parseFloat(stack.pop());
-          const a = parseFloat(stack.pop());
-          stack.push(b !== 0 ? a / b : 0);
-          break;
-        }
-
         default:
-          // Ignore unhandled PostScript directives without throwing
           break;
       }
     };
 
     // Main execution loop over tokens
-    const maxTokens = Math.min(tokens.length, 200000);
-    for (let tIdx = 0; tIdx < maxTokens; tIdx++) {
+    for (let tIdx = 0; tIdx < tokens.length; tIdx++) {
       const tok = tokens[tIdx];
 
       // If numeric literal, push to stack
       const num = Number(tok);
       if (!isNaN(num) && tok.trim() !== '') {
         stack.push(num);
+        if (stack.length > 80) stack.splice(0, 30); // Prevent stack overflow
         continue;
       }
 
-      // If procedure bracket or string, push to stack
-      if (tok.startsWith('/') || tok.startsWith('(') || tok === '[' || tok === ']' || tok === '{' || tok === '}') {
+      // If procedure bracket or string or name literal, push to stack
+      if (tok.startsWith('(') || tok.startsWith('/') || tok === '[' || tok === ']' || tok === '{' || tok === '}') {
         stack.push(tok);
+        if (stack.length > 80) stack.splice(0, 30);
         continue;
       }
 
@@ -727,7 +742,7 @@ export function renderPostScriptCodeToCanvas(
     const jpegUrl = canvas.toDataURL('image/jpeg', 0.92);
     const b64 = jpegUrl.split(',')[1];
 
-    if (b64 && b64.length > 200) {
+    if (b64 && b64.length > 200 && pathDrawnCount > 0) {
       return {
         previewUrl: jpegUrl,
         base64Data: b64,
@@ -741,3 +756,4 @@ export function renderPostScriptCodeToCanvas(
   }
   return null;
 }
+

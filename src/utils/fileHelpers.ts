@@ -1020,14 +1020,15 @@ export async function extractEmbeddedImageFromVector(file: File): Promise<{ prev
   const xmpResult = await extractEmbeddedXmpThumbnail(file);
   if (xmpResult) return xmpResult;
 
-  // 5. Client-Side Pure PostScript Vector Canvas Interpreter for small files (< 1MB)
-  if (file.size < 1024 * 1024) {
+  // 5. Client-Side Pure Illustrator 10 / PostScript Vector Canvas Interpreter (up to 25MB)
+  if (file.size <= 25 * 1024 * 1024) {
     try {
-      const buffer = await file.arrayBuffer();
+      const sliceSize = Math.min(file.size, 15 * 1024 * 1024);
+      const buffer = await file.slice(0, sliceSize).arrayBuffer();
       const textDecoder = new TextDecoder('latin1');
       const psText = textDecoder.decode(buffer);
-      const psCanvasRes = renderPostScriptCodeToCanvas(psText, 1200);
-      if (psCanvasRes) {
+      const psCanvasRes = renderPostScriptCodeToCanvas(psText, 1024);
+      if (psCanvasRes && psCanvasRes.base64Data) {
         return {
           previewUrl: psCanvasRes.previewUrl,
           base64Data: psCanvasRes.base64Data,
