@@ -218,6 +218,7 @@ export function renderPostScriptCodeToCanvas(
       y: 'curvetoy',
       h: 'closepath',
       cp: 'closepath',
+      e: 'closepath',
       f: 'fill',
       F: 'fill',
       'f*': 'eofill',
@@ -228,6 +229,7 @@ export function renderPostScriptCodeToCanvas(
       'b*': 'eofillstroke',
       'B*': 'eofillstroke',
       n: 'newpath',
+      N: 'newpath',
       q: 'gsave',
       Q: 'grestore',
       w: 'setlinewidth',
@@ -242,6 +244,57 @@ export function renderPostScriptCodeToCanvas(
       g: 'setgray',
       G: 'setgray',
       cm: 'concat',
+      re: 'rect',
+      W: 'clip',
+      'W*': 'eoclip',
+      // Adobe Illustrator specific prefixes & shorthands
+      _m: 'moveto',
+      _l: 'lineto',
+      _c: 'curveto',
+      _v: 'curvetov',
+      _y: 'curvetoy',
+      _h: 'closepath',
+      _cp: 'closepath',
+      _e: 'closepath',
+      _f: 'fill',
+      _F: 'fill',
+      '_f*': 'eofill',
+      _s: 'stroke',
+      _S: 'stroke',
+      _b: 'fillstroke',
+      _B: 'fillstroke',
+      '_b*': 'eofillstroke',
+      _n: 'newpath',
+      _N: 'newpath',
+      _q: 'gsave',
+      _Q: 'grestore',
+      _w: 'setlinewidth',
+      _J: 'setlinecap',
+      _j: 'setlinejoin',
+      _M: 'setmiterlimit',
+      _d: 'setdash',
+      _rg: 'setrgbcolor',
+      _rgb: 'setrgbcolor',
+      _xa: 'setrgbcolor',
+      _k: 'setcmykcolor',
+      _K: 'setcmykcolor',
+      _xk: 'setcmykcolor',
+      _g: 'setgray',
+      _G: 'setgray',
+      _xg: 'setgray',
+      _cm: 'concat',
+      _re: 'rect',
+      _W: 'clip',
+      '_W*': 'eoclip',
+      _ar: 'arc',
+      _arcn: 'arcn',
+      _o: 'stroke',
+      _O: 'fill',
+      _X: 'noop',
+      _x: 'noop',
+      _u: 'newpath',
+      _U: 'noop',
+      _H: 'closepath',
     };
 
     let curR = 0, curG = 0, curB = 0;
@@ -255,6 +308,12 @@ export function renderPostScriptCodeToCanvas(
         const mapped = dict[op];
         if (typeof mapped === 'string') {
           op = mapped;
+        }
+      } else if (op.startsWith('_')) {
+        const unPrefixed = op.substring(1);
+        if (dict[unPrefixed]) {
+          const mapped = dict[unPrefixed];
+          if (typeof mapped === 'string') op = mapped;
         }
       }
 
@@ -361,6 +420,18 @@ export function renderPostScriptCodeToCanvas(
           break;
         }
 
+        case 'rect': {
+          const h = parseFloat(stack.pop());
+          const w = parseFloat(stack.pop());
+          const y = parseFloat(stack.pop());
+          const x = parseFloat(stack.pop());
+          if (!isNaN(x) && !isNaN(y) && !isNaN(w) && !isNaN(h)) {
+            ctx.rect(x, y, w, h);
+            pathDrawnCount++;
+          }
+          break;
+        }
+
         case 'rectfill': {
           const h = parseFloat(stack.pop());
           const w = parseFloat(stack.pop());
@@ -386,6 +457,21 @@ export function renderPostScriptCodeToCanvas(
           }
           break;
         }
+
+        case 'clip':
+          try {
+            ctx.clip('nonzero');
+          } catch {}
+          break;
+
+        case 'eoclip':
+          try {
+            ctx.clip('evenodd');
+          } catch {}
+          break;
+
+        case 'noop':
+          break;
 
         case 'closepath':
           ctx.closePath();

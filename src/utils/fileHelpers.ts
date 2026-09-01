@@ -1,13 +1,15 @@
 import * as pdfjsLib from 'pdfjs-dist';
 // @ts-ignore
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
+// @ts-ignore
 import UTIF from 'utif';
 import { renderPostScriptCodeToCanvas } from './postscriptRenderer';
 import { extractVectorSemanticInfo } from './vectorMetadataExtractor';
 
-// Configure PDF.js worker safely
+// Configure PDF.js worker safely using Vite bundled asset URL (works 100% locally and on Vercel)
 if (typeof window !== 'undefined' && (pdfjsLib as any).GlobalWorkerOptions) {
   try {
-    (pdfjsLib as any).GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version || '4.10.38'}/pdf.worker.min.mjs`;
+    (pdfjsLib as any).GlobalWorkerOptions.workerSrc = pdfjsWorker;
   } catch (e) {
     // Ignore worker setup error
   }
@@ -551,14 +553,17 @@ export async function extractTiffFromBinaryEps(
       headerBytes[3] === 0xC6
     ) {
       const view = new DataView(headerBuffer);
+      const psOffset = view.getUint32(4, true);
+      const psLength = view.getUint32(8, true);
       const tiffOffset = view.getUint32(20, true);
       const tiffLength = view.getUint32(24, true);
 
+      // 1. Try TIFF/JPEG preview from Binary Header
       if (tiffOffset > 0 && tiffLength > 50 && tiffOffset + tiffLength <= file.size) {
         const tiffBuffer = await file.slice(tiffOffset, tiffOffset + tiffLength).arrayBuffer();
         const tiffBytes = new Uint8Array(tiffBuffer);
 
-        // 1. Check if the preview slice is directly JPEG stream (0xFF 0xD8 0xFF)
+        // Check if directly JPEG stream (0xFF 0xD8 0xFF)
         if (tiffBytes[0] === 0xFF && tiffBytes[1] === 0xD8 && tiffBytes[2] === 0xFF) {
           const blob = new Blob([tiffBuffer], { type: 'image/jpeg' });
           const url = URL.createObjectURL(blob);
@@ -573,7 +578,7 @@ export async function extractTiffFromBinaryEps(
           }
         }
 
-        // 2. Decode TIFF preview with UTIF.js
+        // Decode TIFF preview with UTIF.js
         try {
           const ifds = UTIF.decode(tiffBuffer);
           if (ifds && ifds.length > 0 && ifds[0].width > 10 && ifds[0].height > 10) {
@@ -620,6 +625,40 @@ export async function extractTiffFromBinaryEps(
           console.warn('UTIF decode exception for EPS TIFF preview:', utifErr);
         }
       }
+
+      // 2. If TIFF preview was missing or failed, extract PostScript slice from psOffset
+      if (psOffset > 0 && psLength > 100 && psOffset + psLength <= file.size) {
+        try {
+          const psBuffer = await file.slice(psOffset, psOffset + psLength).arrayBuffer();
+          const textDecoder = new TextDecoder('latin1');
+          const psText = textDecoder.decode(psBuffer);
+
+          // Check XMP in PostScript slice
+          const epsi = parseEpsiHexPreview(psText);
+          if (epsi) return epsi;
+
+          // Check embedded streams in PostScript slice
+          const psBytes = new Uint8Array(psBuffer);
+          const pdfIdx = psText.indexOf('%PDF-');
+          if (pdfIdx !== -1) {
+            const pdfSlice = psBuffer.slice(pdfIdx);
+            const renderedPdf = await renderPdfBufferToCanvas(pdfSlice);
+            if (renderedPdf) return renderedPdf;
+          }
+
+          // Check client-side PostScript canvas interpreter
+          const psCanvas = renderPostScriptCodeToCanvas(psText, 1200);
+          if (psCanvas) {
+            return {
+              previewUrl: psCanvas.previewUrl,
+              base64Data: psCanvas.base64Data,
+              mimeTypeForAi: psCanvas.mimeTypeForAi,
+            };
+          }
+        } catch (psErr) {
+          console.warn('Error rendering PostScript slice from binary EPS:', psErr);
+        }
+      }
     }
   } catch (err) {
     console.warn('extractTiffFromBinaryEps error:', err);
@@ -632,8 +671,8 @@ export async function extractTiffFromBinaryEps(
  */
 export async function extractEmbeddedXmpThumbnail(file: File): Promise<{ previewUrl: string; base64Data: string; mimeTypeForAi: string } | null> {
   try {
-    // Read up to 20MB of file text
-    const sliceSize = Math.min(file.size, 20 * 1024 * 1024);
+    // Read up to 25MB of file text
+    const sliceSize = Math.min(file.size, 25 * 1024 * 1024);
     const buffer = await file.slice(0, sliceSize).arrayBuffer();
     const textDecoder = new TextDecoder('latin1'); // latin1 never throws on binary PostScript
     const text = textDecoder.decode(buffer);
@@ -642,35 +681,90 @@ export async function extractEmbeddedXmpThumbnail(file: File): Promise<{ preview
     const epsi = parseEpsiHexPreview(text);
     if (epsi) return epsi;
 
-    // 2. Match Adobe XMP GImg Thumbnail (<xmpGImg:image> or <xapGImg:image> or <photoshop:image> or <xmp:Thumbnail> with any attributes)
-    const xmpImgMatches = text.matchAll(/<(?:xmpGImg|xapGImg|photoshop|xmp):(?:image|Thumbnail|Thumbnails)[^>]*>([\s\S]*?)<\/(?:xmpGImg|xapGImg|photoshop|xmp):(?:image|Thumbnail|Thumbnails)>/gi);
-    for (const match of xmpImgMatches) {
-      if (match && match[1]) {
-        const cleanB64 = match[1].replace(/[\r\n\s]/g, '');
-        if (cleanB64.length > 80) {
-          // Test as JPEG
-          const jpegCandidate = await validateAndRasterizeImage(`data:image/jpeg;base64,${cleanB64}`, 1200);
-          if (jpegCandidate) {
-            return {
-              previewUrl: jpegCandidate.previewUrl,
-              base64Data: jpegCandidate.base64Data,
-              mimeTypeForAi: 'image/jpeg',
-            };
-          }
-          // Test as PNG
-          const pngCandidate = await validateAndRasterizeImage(`data:image/png;base64,${cleanB64}`, 1200);
-          if (pngCandidate) {
-            return {
-              previewUrl: pngCandidate.previewUrl,
-              base64Data: pngCandidate.base64Data,
-              mimeTypeForAi: 'image/jpeg',
-            };
+    // 2. Match Adobe XMP GImg Thumbnail (<xmpGImg:image>, <xapGImg:image>, <photoshop:Thumbnail>, <xmp:Thumbnail>, etc.)
+    const xmpPatterns = [
+      /<(?:xmpGImg|xapGImg|photoshop|xmp):(?:image|Thumbnail|Thumbnails)[^>]*>([\s\S]*?)<\/(?:xmpGImg|xapGImg|photoshop|xmp):(?:image|Thumbnail|Thumbnails)>/gi,
+      /(?:xmpGImg:image|photoshop:Thumbnail|xapGImg:image)=["']([A-Za-z0-9+/=\s\r\n]{100,})["']/gi,
+    ];
+
+    for (const pattern of xmpPatterns) {
+      const matches = text.matchAll(pattern);
+      for (const match of matches) {
+        if (match && match[1]) {
+          const cleanB64 = match[1].replace(/[\r\n\s]/g, '');
+          if (cleanB64.length > 80) {
+            // Test as JPEG
+            const jpegCandidate = await validateAndRasterizeImage(`data:image/jpeg;base64,${cleanB64}`, 1200);
+            if (jpegCandidate) {
+              return {
+                previewUrl: jpegCandidate.previewUrl,
+                base64Data: jpegCandidate.base64Data,
+                mimeTypeForAi: 'image/jpeg',
+              };
+            }
+
+            // Test as PNG
+            const pngCandidate = await validateAndRasterizeImage(`data:image/png;base64,${cleanB64}`, 1200);
+            if (pngCandidate) {
+              return {
+                previewUrl: pngCandidate.previewUrl,
+                base64Data: pngCandidate.base64Data,
+                mimeTypeForAi: 'image/jpeg',
+              };
+            }
+
+            // Try decoding as TIFF data with UTIF
+            try {
+              const binStr = atob(cleanB64);
+              const binBytes = new Uint8Array(binStr.length);
+              for (let b = 0; b < binStr.length; b++) binBytes[b] = binStr.charCodeAt(b);
+              const ifds = UTIF.decode(binBytes.buffer);
+              if (ifds && ifds.length > 0 && ifds[0].width > 10 && ifds[0].height > 10) {
+                const firstIfd = ifds[0];
+                UTIF.decodeImage(binBytes.buffer, firstIfd);
+                const rgba = UTIF.toRGBA8(firstIfd);
+                if (rgba && rgba.length === firstIfd.width * firstIfd.height * 4) {
+                  const canvas = document.createElement('canvas');
+                  canvas.width = firstIfd.width;
+                  canvas.height = firstIfd.height;
+                  const ctx = canvas.getContext('2d');
+                  if (ctx) {
+                    const imgData = new ImageData(
+                      new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, rgba.byteLength),
+                      firstIfd.width,
+                      firstIfd.height
+                    );
+                    ctx.putImageData(imgData, 0, 0);
+
+                    const finalCanvas = document.createElement('canvas');
+                    finalCanvas.width = firstIfd.width;
+                    finalCanvas.height = firstIfd.height;
+                    const fCtx = finalCanvas.getContext('2d');
+                    if (fCtx) {
+                      fCtx.fillStyle = '#ffffff';
+                      fCtx.fillRect(0, 0, firstIfd.width, firstIfd.height);
+                      fCtx.drawImage(canvas, 0, 0);
+
+                      const jpegUrl = finalCanvas.toDataURL('image/jpeg', 0.90);
+                      const b64 = jpegUrl.split(',')[1];
+                      if (b64 && b64.length > 50) {
+                        return {
+                          previewUrl: jpegUrl,
+                          base64Data: b64,
+                          mimeTypeForAi: 'image/jpeg',
+                        };
+                      }
+                    }
+                  }
+                }
+              }
+            } catch {}
           }
         }
       }
     }
 
-    // 3. Match Photoshop / Illustrator Base64 thumbnail in comments
+    // 3. Match Photoshop / Illustrator Base64 thumbnail in DSC comments
     const rawB64Match = text.match(/%%BeginPhotoshop:[\s\S]*?([A-Za-z0-9+/=]{300,})[\s\S]*?%%EndPhotoshop/i);
     if (rawB64Match && rawB64Match[1]) {
       const cleanB64 = rawB64Match[1].replace(/[\r\n\s]/g, '');

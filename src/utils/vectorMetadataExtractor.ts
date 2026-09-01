@@ -98,7 +98,28 @@ export function extractVectorSemanticInfo(psText: string, filename: string): Vec
     keywords.push(...rawKws);
   }
 
-  // 2. XMP Dublin Core / Photoshop / PDF Metadata
+  // 2. XMP Dublin Core / Photoshop / PDF Metadata & PDF Info Dict
+  const pdfTitleMatch = psText.match(/\/Title\s*\(([^)]+)\)/i);
+  if (pdfTitleMatch && pdfTitleMatch[1] && !title) {
+    const rawPdfTitle = pdfTitleMatch[1].trim();
+    if (rawPdfTitle && !rawPdfTitle.toLowerCase().includes('untitled') && rawPdfTitle.length > 2) {
+      title = rawPdfTitle;
+    }
+  }
+
+  const pdfSubjectMatch = psText.match(/\/Subject\s*\(([^)]+)\)/i);
+  if (pdfSubjectMatch && pdfSubjectMatch[1] && !subject) {
+    subject = pdfSubjectMatch[1].trim();
+  }
+
+  const pdfKwDictMatch = psText.match(/\/Keywords\s*\(([^)]+)\)/i);
+  if (pdfKwDictMatch && pdfKwDictMatch[1]) {
+    const rawKws = pdfKwDictMatch[1].split(/[,;]/).map((k) => k.trim()).filter(Boolean);
+    for (const k of rawKws) {
+      if (k && !keywords.includes(k)) keywords.push(k);
+    }
+  }
+
   const xmpTitleMatch = psText.match(/<dc:title>[\s\S]*?<rdf:li[^>]*>([\s\S]*?)<\/rdf:li>[\s\S]*?<\/dc:title>/i);
   if (xmpTitleMatch && xmpTitleMatch[1]) {
     const cleanXmpTitle = xmpTitleMatch[1].replace(/<[^>]+>/g, '').trim();
