@@ -738,11 +738,42 @@ export function renderPostScriptCodeToCanvas(
 
     ctx.restore();
 
+    // Verify that the canvas actually has visible drawing/contrast and is NOT a solid white box
+    try {
+      const imgData = ctx.getImageData(0, 0, canvasW, canvasH);
+      const data = imgData.data;
+      let nonWhitePixels = 0;
+      const step = 4; // Sample every 4th pixel for high performance
+      let sampledCount = 0;
+
+      for (let p = 0; p < data.length; p += 4 * step) {
+        const r = data[p];
+        const g = data[p + 1];
+        const b = data[p + 2];
+        const a = data[p + 3];
+        sampledCount++;
+
+        // If pixel is colored or has contrast from pure white (r < 240 or g < 240 or b < 240)
+        if (a > 30 && (r < 240 || g < 240 || b < 240)) {
+          nonWhitePixels++;
+        }
+      }
+
+      const nonWhiteRatio = nonWhitePixels / (sampledCount || 1);
+      // If less than 0.3% of sampled pixels contain artwork, reject as blank/failed render
+      if (nonWhiteRatio < 0.003 || pathDrawnCount < 1) {
+        return null;
+      }
+    } catch (pixelErr) {
+      // If getImageData fails due to security/taint, proceed only if multiple paths drawn
+      if (pathDrawnCount < 2) return null;
+    }
+
     // Export high-quality JPEG
     const jpegUrl = canvas.toDataURL('image/jpeg', 0.92);
     const b64 = jpegUrl.split(',')[1];
 
-    if (b64 && b64.length > 200 && pathDrawnCount > 0) {
+    if (b64 && b64.length > 200) {
       return {
         previewUrl: jpegUrl,
         base64Data: b64,

@@ -34,9 +34,9 @@ export function cleanVectorSubject(filename: string): string {
   name = name.replace(/_\d{8,}(?:_\d+)?/g, ''); // Remove timestamp suffixes like _202608242233
   name = name.replace(/[-_]+/g, ' ').trim(); // Replace underscores/hyphens with spaces
   
-  // If the filename is just numbers like "003" or "019", keep it as "Vector Graphic 003" or "003"
-  if (/^\d+$/.test(name)) {
-    return `Vector Graphic ${name}`;
+  // If the filename is just numbers like "001", "002", "003" or generic "untitled", return empty to prevent AI number hallucinations
+  if (/^\d+$/.test(name) || /^untitled/i.test(name) || /^img_\d+$/i.test(name) || /^file_\d+$/i.test(name)) {
+    return '';
   }
 
   // Title-case

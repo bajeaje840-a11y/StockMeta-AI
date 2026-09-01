@@ -500,10 +500,10 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
       try {
         fs.writeFileSync(pdfPath, fileBuffer.slice(pdfIdx));
         execSync(
-          `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=92 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${pdfPath}"`,
+          `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=94 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${pdfPath}"`,
           { timeout: 15000, stdio: 'pipe' }
         );
-        if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+        if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1000) {
           return fs.readFileSync(outPath);
         }
       } catch (e) {
@@ -526,7 +526,7 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
         try {
           fs.writeFileSync(tiffPath, fileBuffer.slice(tiffOffset, tiffOffset + tiffLength));
           execSync(`convert "${tiffPath}" "${outPath}"`, { timeout: 15000, stdio: 'pipe' });
-          if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+          if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1000) {
             return fs.readFileSync(outPath);
           }
         } catch (e) {
@@ -538,18 +538,28 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
 
       // Try PS block from binary header
       if (psOffset > 0 && psLength > 0 && fileBuffer.length >= psOffset + psLength) {
+        const psSlice = fileBuffer.slice(psOffset, psOffset + psLength);
         const psPath = path.join(tmpDir, `extracted_${randId}.eps`);
         try {
-          fs.writeFileSync(psPath, fileBuffer.slice(psOffset, psOffset + psLength));
+          fs.writeFileSync(psPath, psSlice);
           execSync(
-            `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -dEPSCrop -sDEVICE=jpeg -dJPEGQ=92 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${psPath}"`,
+            `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -dEPSCrop -sDEVICE=jpeg -dJPEGQ=94 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${psPath}"`,
             { timeout: 15000, stdio: 'pipe' }
           );
-          if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+          if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1000) {
             return fs.readFileSync(outPath);
           }
         } catch (e) {
-          // Continue
+          // Fallback to standard GS on PS slice
+          try {
+            execSync(
+              `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=94 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${psPath}"`,
+              { timeout: 15000, stdio: 'pipe' }
+            );
+            if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1000) {
+              return fs.readFileSync(outPath);
+            }
+          } catch (e2) {}
         } finally {
           if (fs.existsSync(psPath)) fs.unlinkSync(psPath);
         }
@@ -565,7 +575,7 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
         const xmpBuf = Buffer.from(cleanB64, 'base64');
         if (xmpBuf.length > 500) {
           fs.writeFileSync(outPath, xmpBuf);
-          if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+          if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1000) {
             return fs.readFileSync(outPath);
           }
         }
@@ -580,21 +590,21 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
 
     try {
       execSync(
-        `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -dEPSCrop -sDEVICE=jpeg -dJPEGQ=92 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${inPath}"`,
+        `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -dEPSCrop -sDEVICE=jpeg -dJPEGQ=94 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${inPath}"`,
         { timeout: 15000, stdio: 'pipe' }
       );
-      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1000) {
         return fs.readFileSync(outPath);
       }
     } catch (e) {}
 
-    // Strategy 5: Ghostscript standard (without EPSCrop)
+    // Strategy 5: Ghostscript standard (without EPSCrop, full artboard)
     try {
       execSync(
-        `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=92 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${inPath}"`,
+        `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=94 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${inPath}"`,
         { timeout: 15000, stdio: 'pipe' }
       );
-      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1000) {
         return fs.readFileSync(outPath);
       }
     } catch (e) {}
@@ -602,7 +612,7 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
     // Strategy 6: ImageMagick Convert
     try {
       execSync(`convert -density 150 "${inPath}" -background white -flatten "${outPath}"`, { timeout: 15000, stdio: 'pipe' });
-      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1000) {
         return fs.readFileSync(outPath);
       }
     } catch (e) {}

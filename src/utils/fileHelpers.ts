@@ -1016,29 +1016,9 @@ export async function extractEmbeddedImageFromVector(file: File): Promise<{ prev
   const streamResult = await extractEmbeddedStreamFromVector(file);
   if (streamResult) return streamResult;
 
-  // 4. XMP Packet thumbnail or EPSI hex preview (<xmpGImg:image> / %%BeginPreview)
+  // 4. XMP Packet thumbnail (<xmpGImg:image> / photoshop:Thumbnail)
   const xmpResult = await extractEmbeddedXmpThumbnail(file);
   if (xmpResult) return xmpResult;
-
-  // 5. Client-Side Pure Illustrator 10 / PostScript Vector Canvas Interpreter (up to 25MB)
-  if (file.size <= 25 * 1024 * 1024) {
-    try {
-      const sliceSize = Math.min(file.size, 15 * 1024 * 1024);
-      const buffer = await file.slice(0, sliceSize).arrayBuffer();
-      const textDecoder = new TextDecoder('latin1');
-      const psText = textDecoder.decode(buffer);
-      const psCanvasRes = renderPostScriptCodeToCanvas(psText, 1024);
-      if (psCanvasRes && psCanvasRes.base64Data) {
-        return {
-          previewUrl: psCanvasRes.previewUrl,
-          base64Data: psCanvasRes.base64Data,
-          mimeTypeForAi: psCanvasRes.mimeTypeForAi,
-        };
-      }
-    } catch (psErr) {
-      console.warn('Client PostScript canvas interpreter fallback:', psErr);
-    }
-  }
 
   return null;
 }
@@ -1236,7 +1216,7 @@ export async function prepareFileForAi(file: File): Promise<{
       }
 
       try {
-        // 1st Priority: Native Client-Side Zero-Latency Vector Extractor (AI Private Data / Binary TIFF / PDF Stream)
+        // 1st Priority: Native Client-Side Zero-Latency Vector Extractor (AI Private Data / Binary TIFF / PDF Stream / XMP)
         const extracted = await extractEmbeddedImageFromVector(file);
         if (extracted && extracted.base64Data) {
           return {
@@ -1247,8 +1227,8 @@ export async function prepareFileForAi(file: File): Promise<{
           };
         }
 
-        // 2nd Priority: Server-Side Ghostscript Vector Renderer for small PostScript files (< 4MB)
-        if (file.size <= 4 * 1024 * 1024) {
+        // 2nd Priority: Server-Side Ghostscript & Multi-Strategy Vector Engine (up to 50MB)
+        if (file.size <= 50 * 1024 * 1024) {
           const serverRendered = await renderVectorViaServer(file);
           if (serverRendered && serverRendered.base64Data) {
             return {
@@ -1260,7 +1240,28 @@ export async function prepareFileForAi(file: File): Promise<{
           }
         }
 
-        // 3rd Priority: Clean vector artboard showcase canvas preview (base64Data is empty so AI doesn't see placeholder badge)
+        // 3rd Priority: Client-Side PostScript Vector Interpreter (with strict contrast check)
+        if (file.size <= 25 * 1024 * 1024) {
+          try {
+            const sliceSize = Math.min(file.size, 15 * 1024 * 1024);
+            const buffer = await file.slice(0, sliceSize).arrayBuffer();
+            const textDecoder = new TextDecoder('latin1');
+            const psText = textDecoder.decode(buffer);
+            const psCanvasRes = renderPostScriptCodeToCanvas(psText, 1024);
+            if (psCanvasRes && psCanvasRes.base64Data) {
+              return {
+                ...psCanvasRes,
+                isRealArtworkPreview: true,
+                vectorSemanticText,
+                cleanSubject,
+              };
+            }
+          } catch (psErr) {
+            console.warn('Client PostScript canvas interpreter fallback:', psErr);
+          }
+        }
+
+        // 4th Priority: Clean vector artboard showcase canvas preview (base64Data is empty so AI doesn't see placeholder badge)
         const fallbackBadge = await renderEpsCanvasPreview(file);
         return {
           previewUrl: fallbackBadge.previewUrl,
