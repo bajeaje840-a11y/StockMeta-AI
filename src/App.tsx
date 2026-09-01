@@ -389,33 +389,35 @@ export default function App() {
 
     setFiles((prev) => [...prev, ...preparedList]);
 
-    // Pre-rasterize vector/video previews in background for immediate visual feedback
-    preparedList.forEach(async (item) => {
-      if (item.formatCategory === 'vector' || item.formatCategory === 'video' || item.formatCategory === 'pdf') {
-        try {
-          if (item.file) {
-            const prep = await prepareFileForAi(item.file);
-            setFiles((prev) =>
-              prev.map((f) =>
-                f.id === item.id
-                  ? {
-                      ...f,
-                      previewUrl: prep.previewUrl || f.previewUrl,
-                      base64Data: prep.base64Data || f.base64Data,
-                      mimeTypeForAi: prep.mimeTypeForAi || f.mimeTypeForAi,
-                      isRealArtworkPreview: prep.isRealArtworkPreview,
-                      vectorSemanticText: prep.vectorSemanticText,
-                      cleanSubject: prep.cleanSubject,
-                    }
-                  : f
-              )
-            );
+    // Pre-rasterize vector/video previews sequentially in background for smooth UI and low memory
+    (async () => {
+      for (const item of preparedList) {
+        if (item.formatCategory === 'vector' || item.formatCategory === 'video' || item.formatCategory === 'pdf') {
+          try {
+            if (item.file) {
+              const prep = await prepareFileForAi(item.file);
+              setFiles((prev) =>
+                prev.map((f) =>
+                  f.id === item.id
+                    ? {
+                        ...f,
+                        previewUrl: prep.previewUrl || f.previewUrl,
+                        base64Data: prep.base64Data || f.base64Data,
+                        mimeTypeForAi: prep.mimeTypeForAi || f.mimeTypeForAi,
+                        isRealArtworkPreview: prep.isRealArtworkPreview,
+                        vectorSemanticText: prep.vectorSemanticText,
+                        cleanSubject: prep.cleanSubject,
+                      }
+                    : f
+                )
+              );
+            }
+          } catch (e) {
+            console.warn('Background preview preloading failed:', e);
           }
-        } catch (e) {
-          console.warn('Background preview preloading failed:', e);
         }
       }
-    });
+    })();
 
     // Check if provider is ready
     const status = isProviderReady(aiConfig);

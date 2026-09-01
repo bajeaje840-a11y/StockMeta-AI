@@ -64,8 +64,9 @@ function tokenizePostScript(code: string): string[] {
   const tokens: string[] = [];
   let i = 0;
   const len = code.length;
+  const maxTokens = 30000;
 
-  while (i < len) {
+  while (i < len && tokens.length < maxTokens) {
     const ch = code[i];
 
     // Whitespace

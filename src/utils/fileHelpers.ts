@@ -386,22 +386,32 @@ export function validateAndRasterizeImage(
   });
 }
 
+// In-flight file preparation promise cache to prevent concurrent duplicate processing
+const inFlightPrepCache = new WeakMap<File, Promise<any>>();
+
 /**
  * Renders a PDF or AI ArrayBuffer using Mozilla PDF.js to a crisp high-res raster image
+ * Capped to max 1024px to prevent massive memory usage, with automatic cleanup
  */
 export async function renderPdfBufferToCanvas(
-  buffer: ArrayBuffer,
-  scale = 1.5
+  buffer: ArrayBuffer
 ): Promise<{ previewUrl: string; base64Data: string; mimeTypeForAi: string } | null> {
+  let pdf: any = null;
+  let page: any = null;
   try {
     const loadingTask = (pdfjsLib as any).getDocument({
       data: new Uint8Array(buffer),
+      disableFontFace: true,
+      stopAtErrors: true,
     });
-    const pdf = await loadingTask.promise;
+    pdf = await loadingTask.promise;
     if (pdf.numPages < 1) return null;
 
-    const page = await pdf.getPage(1);
-    const viewport = page.getViewport({ scale });
+    page = await pdf.getPage(1);
+    const unscaledViewport = page.getViewport({ scale: 1.0 });
+    const maxDim = Math.max(unscaledViewport.width, unscaledViewport.height, 1);
+    const targetScale = Math.max(0.2, Math.min(2.0, 1024 / maxDim));
+    const viewport = page.getViewport({ scale: targetScale });
 
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(Math.round(viewport.width), 100);
@@ -419,7 +429,7 @@ export async function renderPdfBufferToCanvas(
       canvas,
     } as any)).promise;
 
-    const jpegUrl = canvas.toDataURL('image/jpeg', 0.90);
+    const jpegUrl = canvas.toDataURL('image/jpeg', 0.88);
     const b64 = jpegUrl.split(',')[1];
     if (b64 && b64.length > 100) {
       return {
@@ -430,6 +440,11 @@ export async function renderPdfBufferToCanvas(
     }
   } catch (err) {
     console.warn('renderPdfBufferToCanvas exception:', err);
+  } finally {
+    try {
+      page?.cleanup?.();
+      pdf?.destroy?.();
+    } catch {}
   }
   return null;
 }
@@ -669,97 +684,48 @@ export async function extractTiffFromBinaryEps(
 
 /**
  * Extracts embedded XMP metadata thumbnail or raster image from AI/EPS files
+ * Reads only the first 1.5MB where XMP headers are located to preserve memory
  */
 export async function extractEmbeddedXmpThumbnail(file: File): Promise<{ previewUrl: string; base64Data: string; mimeTypeForAi: string } | null> {
   try {
-    // Read up to 25MB of file text
-    const sliceSize = Math.min(file.size, 25 * 1024 * 1024);
+    const sliceSize = Math.min(file.size, 1500000);
     const buffer = await file.slice(0, sliceSize).arrayBuffer();
-    const textDecoder = new TextDecoder('latin1'); // latin1 never throws on binary PostScript
+    const textDecoder = new TextDecoder('latin1');
     const text = textDecoder.decode(buffer);
 
     // 1. Check EPSI Hex Preview
     const epsi = parseEpsiHexPreview(text);
     if (epsi) return epsi;
 
-    // 2. Match Adobe XMP GImg Thumbnail (<xmpGImg:image>, <xapGImg:image>, <photoshop:Thumbnail>, <xmp:Thumbnail>, etc.)
+    // 2. Match Adobe XMP GImg Thumbnail (<xmpGImg:image> or <photoshop:Thumbnail>)
     const xmpPatterns = [
-      /<(?:xmpGImg|xapGImg|photoshop|xmp):(?:image|Thumbnail|Thumbnails)[^>]*>([\s\S]*?)<\/(?:xmpGImg|xapGImg|photoshop|xmp):(?:image|Thumbnail|Thumbnails)>/gi,
-      /(?:xmpGImg:image|photoshop:Thumbnail|xapGImg:image)=["']([A-Za-z0-9+/=\s\r\n]{100,})["']/gi,
+      /<(?:xmpGImg|xapGImg|photoshop|xmp):(?:image|Thumbnail|Thumbnails)[^>]*>([\s\S]*?)<\/(?:xmpGImg|xapGImg|photoshop|xmp):(?:image|Thumbnail|Thumbnails)>/i,
+      /(?:xmpGImg:image|photoshop:Thumbnail|xapGImg:image)=["']([A-Za-z0-9+/=\s\r\n]{100,})["']/i,
     ];
 
     for (const pattern of xmpPatterns) {
-      const matches = text.matchAll(pattern);
-      for (const match of matches) {
-        if (match && match[1]) {
-          const cleanB64 = match[1].replace(/[\r\n\s]/g, '');
-          if (cleanB64.length > 80) {
-            // Test as JPEG
-            const jpegCandidate = await validateAndRasterizeImage(`data:image/jpeg;base64,${cleanB64}`, 1200);
-            if (jpegCandidate) {
-              return {
-                previewUrl: jpegCandidate.previewUrl,
-                base64Data: jpegCandidate.base64Data,
-                mimeTypeForAi: 'image/jpeg',
-              };
-            }
+      const match = text.match(pattern);
+      if (match && match[1]) {
+        const cleanB64 = match[1].replace(/[\r\n\s]/g, '');
+        if (cleanB64.length > 80) {
+          // Test as JPEG
+          const jpegCandidate = await validateAndRasterizeImage(`data:image/jpeg;base64,${cleanB64}`, 1200);
+          if (jpegCandidate) {
+            return {
+              previewUrl: jpegCandidate.previewUrl,
+              base64Data: jpegCandidate.base64Data,
+              mimeTypeForAi: 'image/jpeg',
+            };
+          }
 
-            // Test as PNG
-            const pngCandidate = await validateAndRasterizeImage(`data:image/png;base64,${cleanB64}`, 1200);
-            if (pngCandidate) {
-              return {
-                previewUrl: pngCandidate.previewUrl,
-                base64Data: pngCandidate.base64Data,
-                mimeTypeForAi: 'image/jpeg',
-              };
-            }
-
-            // Try decoding as TIFF data with UTIF
-            try {
-              const binStr = atob(cleanB64);
-              const binBytes = new Uint8Array(binStr.length);
-              for (let b = 0; b < binStr.length; b++) binBytes[b] = binStr.charCodeAt(b);
-              const ifds = UTIF.decode(binBytes.buffer);
-              if (ifds && ifds.length > 0 && ifds[0].width > 10 && ifds[0].height > 10) {
-                const firstIfd = ifds[0];
-                UTIF.decodeImage(binBytes.buffer, firstIfd);
-                const rgba = UTIF.toRGBA8(firstIfd);
-                if (rgba && rgba.length === firstIfd.width * firstIfd.height * 4) {
-                  const canvas = document.createElement('canvas');
-                  canvas.width = firstIfd.width;
-                  canvas.height = firstIfd.height;
-                  const ctx = canvas.getContext('2d');
-                  if (ctx) {
-                    const imgData = new ImageData(
-                      new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, rgba.byteLength),
-                      firstIfd.width,
-                      firstIfd.height
-                    );
-                    ctx.putImageData(imgData, 0, 0);
-
-                    const finalCanvas = document.createElement('canvas');
-                    finalCanvas.width = firstIfd.width;
-                    finalCanvas.height = firstIfd.height;
-                    const fCtx = finalCanvas.getContext('2d');
-                    if (fCtx) {
-                      fCtx.fillStyle = '#ffffff';
-                      fCtx.fillRect(0, 0, firstIfd.width, firstIfd.height);
-                      fCtx.drawImage(canvas, 0, 0);
-
-                      const jpegUrl = finalCanvas.toDataURL('image/jpeg', 0.90);
-                      const b64 = jpegUrl.split(',')[1];
-                      if (b64 && b64.length > 50) {
-                        return {
-                          previewUrl: jpegUrl,
-                          base64Data: b64,
-                          mimeTypeForAi: 'image/jpeg',
-                        };
-                      }
-                    }
-                  }
-                }
-              }
-            } catch {}
+          // Test as PNG
+          const pngCandidate = await validateAndRasterizeImage(`data:image/png;base64,${cleanB64}`, 1200);
+          if (pngCandidate) {
+            return {
+              previewUrl: pngCandidate.previewUrl,
+              base64Data: pngCandidate.base64Data,
+              mimeTypeForAi: 'image/jpeg',
+            };
           }
         }
       }
@@ -787,78 +753,122 @@ export async function extractEmbeddedXmpThumbnail(file: File): Promise<{ preview
 /**
  * Extracts native PDF / Illustrator document from Adobe Illustrator EPS Private Data
  * (%AI9_PrivateDataBegin, %AI12_PrivateDataBegin, %AI24_PrivateDataBegin, or %%BeginData: ... Hex)
- * Decompresses using pako if zlib compressed and renders with PDF.js for 100% pixel fidelity
+ * Uses high-speed zero-allocation binary byte scanning to prevent memory spikes
  */
 export async function extractAiPrivateDataPdf(
-  psText: string
+  buffer: ArrayBuffer
 ): Promise<{ previewUrl: string; base64Data: string; mimeTypeForAi: string } | null> {
   try {
-    // 1. Match %AI9_PrivateDataBegin, %AI12_PrivateDataBegin, %AI24_PrivateDataBegin, etc.
-    const privateDataMatches = psText.matchAll(/%AI(?:[0-9]+)?_PrivateDataBegin([\s\S]*?)%AI(?:[0-9]+)?_PrivateDataEnd/gi);
-    let allHex = '';
-    for (const match of privateDataMatches) {
-      if (match && match[1]) {
-        const lines = match[1].split(/[\r\n]+/);
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (trimmed.startsWith('%')) {
-            allHex += trimmed.substring(1).replace(/[^0-9a-fA-F]/g, '');
+    const bytes = new Uint8Array(buffer);
+    const beginMagic = [0x50, 0x72, 0x69, 0x76, 0x61, 0x74, 0x65, 0x44, 0x61, 0x74, 0x61, 0x42, 0x65, 0x67, 0x69, 0x6E]; // PrivateDataBegin
+    const endMagic = [0x50, 0x72, 0x69, 0x76, 0x61, 0x74, 0x65, 0x44, 0x61, 0x74, 0x61, 0x45, 0x6E, 0x64]; // PrivateDataEnd
+
+    let pStart = -1;
+    let pEnd = -1;
+
+    for (let i = 0; i < bytes.length - beginMagic.length; i++) {
+      if (bytes[i] === 0x50 && bytes[i + 1] === 0x72) { // 'Pr'
+        let match = true;
+        for (let k = 0; k < beginMagic.length; k++) {
+          if (bytes[i + k] !== beginMagic[k]) { match = false; break; }
+        }
+        if (match) {
+          let idx = i + beginMagic.length;
+          while (idx < bytes.length && bytes[idx] !== 0x0A && bytes[idx] !== 0x0D) idx++;
+          pStart = idx;
+          break;
+        }
+      }
+    }
+
+    if (pStart !== -1) {
+      for (let i = pStart; i < bytes.length - endMagic.length; i++) {
+        if (bytes[i] === 0x50 && bytes[i + 1] === 0x72) { // 'Pr'
+          let match = true;
+          for (let k = 0; k < endMagic.length; k++) {
+            if (bytes[i + k] !== endMagic[k]) { match = false; break; }
+          }
+          if (match) {
+            let idx = i;
+            while (idx > pStart && bytes[idx] !== 0x0A && bytes[idx] !== 0x0D) idx--;
+            pEnd = idx;
+            break;
+          }
+        }
+      }
+    }
+
+    if (pStart !== -1 && pEnd > pStart) {
+      const maxOutLen = Math.floor((pEnd - pStart) / 2);
+      const outU8 = new Uint8Array(maxOutLen);
+      let outIdx = 0;
+      let highNibble = -1;
+
+      for (let i = pStart; i < pEnd; i++) {
+        const b = bytes[i];
+        let val = -1;
+        if (b >= 0x30 && b <= 0x39) val = b - 0x30;       // 0-9
+        else if (b >= 0x61 && b <= 0x66) val = b - 0x61 + 10; // a-f
+        else if (b >= 0x41 && b <= 0x46) val = b - 0x41 + 10; // A-F
+
+        if (val !== -1) {
+          if (highNibble === -1) {
+            highNibble = val;
           } else {
-            allHex += trimmed.replace(/[^0-9a-fA-F]/g, '');
+            outU8[outIdx++] = (highNibble << 4) | val;
+            highNibble = -1;
           }
         }
       }
-    }
 
-    // 2. Also match %%BeginData: ... Hex
-    if (!allHex) {
-      const beginDataMatches = psText.matchAll(/%%BeginData:[^\r\n]*Hex[^\r\n]*([\s\S]*?)%%EndData/gi);
-      for (const match of beginDataMatches) {
-        if (match && match[1]) {
-          const lines = match[1].split(/[\r\n]+/);
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (trimmed.startsWith('%')) {
-              allHex += trimmed.substring(1).replace(/[^0-9a-fA-F]/g, '');
-            } else {
-              allHex += trimmed.replace(/[^0-9a-fA-F]/g, '');
+      const decodedBytes = outU8.subarray(0, outIdx);
+      if (decodedBytes.length > 100) {
+        // Check if raw %PDF-
+        let pdfOffset = -1;
+        for (let j = 0; j < Math.min(decodedBytes.length - 5, 2000); j++) {
+          if (
+            decodedBytes[j] === 0x25 && // %
+            decodedBytes[j + 1] === 0x50 && // P
+            decodedBytes[j + 2] === 0x44 && // D
+            decodedBytes[j + 3] === 0x46 && // F
+            decodedBytes[j + 4] === 0x2D // -
+          ) {
+            pdfOffset = j;
+            break;
+          }
+        }
+
+        if (pdfOffset !== -1) {
+          const pdfBuf = decodedBytes.subarray(pdfOffset).buffer;
+          const rendered = await renderPdfBufferToCanvas(pdfBuf);
+          if (rendered) return rendered;
+        }
+
+        // Check if zlib compressed (0x78 0x9C, 0x78 0xDA, 0x78 0x01)
+        if (decodedBytes[0] === 0x78 && (decodedBytes[1] === 0x9C || decodedBytes[1] === 0xDA || decodedBytes[1] === 0x01)) {
+          try {
+            const inflated = inflate(decodedBytes);
+            let infPdfOffset = -1;
+            for (let j = 0; j < Math.min(inflated.length - 5, 2000); j++) {
+              if (
+                inflated[j] === 0x25 &&
+                inflated[j + 1] === 0x50 &&
+                inflated[j + 2] === 0x44 &&
+                inflated[j + 3] === 0x46 &&
+                inflated[j + 4] === 0x2D
+              ) {
+                infPdfOffset = j;
+                break;
+              }
             }
+            if (infPdfOffset !== -1) {
+              const pdfBuf = inflated.subarray(infPdfOffset).buffer;
+              const rendered = await renderPdfBufferToCanvas(pdfBuf);
+              if (rendered) return rendered;
+            }
+          } catch (zErr) {
+            console.warn('inflate error on AI private data:', zErr);
           }
-        }
-      }
-    }
-
-    // 3. If hex was extracted, decode to binary Uint8Array
-    if (allHex && allHex.length > 200) {
-      const len = Math.floor(allHex.length / 2);
-      const u8 = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-        u8[i] = parseInt(allHex.substr(i * 2, 2), 16);
-      }
-
-      // Check if it's raw PDF (%PDF-)
-      const textDecoder = new TextDecoder('latin1');
-      const textSample = textDecoder.decode(u8.subarray(0, 2000));
-      const pdfIdx = textSample.indexOf('%PDF-');
-      if (pdfIdx !== -1) {
-        const pdfBuf = u8.subarray(pdfIdx).buffer;
-        const rendered = await renderPdfBufferToCanvas(pdfBuf);
-        if (rendered) return rendered;
-      }
-
-      // Check if it's zlib compressed (0x78 0x9C, 0x78 0xDA, 0x78 0x01)
-      if (u8[0] === 0x78 && (u8[1] === 0x9C || u8[1] === 0xDA || u8[1] === 0x01)) {
-        try {
-          const inflated = inflate(u8);
-          const infSample = textDecoder.decode(inflated.subarray(0, 2000));
-          const infPdfIdx = infSample.indexOf('%PDF-');
-          if (infPdfIdx !== -1) {
-            const pdfBuf = inflated.subarray(infPdfIdx).buffer;
-            const rendered = await renderPdfBufferToCanvas(pdfBuf);
-            if (rendered) return rendered;
-          }
-        } catch (zErr) {
-          console.warn('inflate exception on AI private data:', zErr);
         }
       }
     }
@@ -876,7 +886,7 @@ export async function extractEmbeddedStreamFromVector(file: File): Promise<{ pre
     const fullBuffer = await file.arrayBuffer();
     const bytes = new Uint8Array(fullBuffer);
 
-    // 1. Search for PDF Stream (%PDF-1.) across the entire AI or EPS file
+    // 1. Search for PDF Stream (%PDF-1.) across the AI or EPS file
     const pdfMagic = [0x25, 0x50, 0x44, 0x46, 0x2D]; // %PDF-
     for (let i = 0; i < bytes.length - 100; i++) {
       if (
@@ -886,7 +896,7 @@ export async function extractEmbeddedStreamFromVector(file: File): Promise<{ pre
         bytes[i + 3] === pdfMagic[3] &&
         bytes[i + 4] === pdfMagic[4]
       ) {
-        // Find the last %%EOF after %PDF- to trim trailing PostScript garbage that breaks PDF.js
+        // Find the last %%EOF after %PDF-
         let eofIdx = -1;
         for (let j = bytes.length - 10; j > i + 100; j--) {
           if (
@@ -925,15 +935,16 @@ export async function extractEmbeddedStreamFromVector(file: File): Promise<{ pre
       }
     }
 
-    // 2. Scan for embedded JPEG streams (0xFF 0xD8 0xFF ... 0xFF 0xD9)
-    let bestCandidate: { previewUrl: string; base64Data: string; mimeType: string } | null = null;
-    let maxCandidateLen = 0;
+    // 2. Scan for largest embedded JPEG stream (0xFF 0xD8 0xFF ... 0xFF 0xD9)
+    let bestStart = -1;
+    let bestEnd = -1;
+    let maxLen = 0;
 
     for (let i = 0; i < bytes.length - 500; i++) {
       if (bytes[i] === 0xFF && bytes[i + 1] === 0xD8 && bytes[i + 2] === 0xFF) {
         let endIdx = -1;
-        const maxJpegSearch = Math.min(bytes.length - 1, i + 8 * 1024 * 1024);
-        for (let j = i + 300; j < maxJpegSearch; j++) {
+        const maxSearch = Math.min(bytes.length - 1, i + 6 * 1024 * 1024);
+        for (let j = i + 300; j < maxSearch; j++) {
           if (bytes[j] === 0xFF && bytes[j + 1] === 0xD9) {
             endIdx = j + 2;
             break;
@@ -941,28 +952,29 @@ export async function extractEmbeddedStreamFromVector(file: File): Promise<{ pre
         }
         if (endIdx > i && endIdx - i > 1000) {
           const sliceLen = endIdx - i;
-          if (sliceLen > maxCandidateLen) {
-            const jpegSlice = bytes.subarray(i, endIdx);
-            const blob = new Blob([jpegSlice], { type: 'image/jpeg' });
-            const url = URL.createObjectURL(blob);
-            const rasterized = await validateAndRasterizeImage(url, 1200);
-            URL.revokeObjectURL(url);
-            if (rasterized) {
-              bestCandidate = rasterized;
-              maxCandidateLen = sliceLen;
-            }
+          if (sliceLen > maxLen) {
+            maxLen = sliceLen;
+            bestStart = i;
+            bestEnd = endIdx;
           }
           i = endIdx;
         }
       }
     }
 
-    if (bestCandidate) {
-      return {
-        previewUrl: bestCandidate.previewUrl,
-        base64Data: bestCandidate.base64Data,
-        mimeTypeForAi: 'image/jpeg',
-      };
+    if (bestStart !== -1 && bestEnd > bestStart) {
+      const jpegSlice = bytes.subarray(bestStart, bestEnd);
+      const blob = new Blob([jpegSlice], { type: 'image/jpeg' });
+      const url = URL.createObjectURL(blob);
+      const rasterized = await validateAndRasterizeImage(url, 1200);
+      URL.revokeObjectURL(url);
+      if (rasterized) {
+        return {
+          previewUrl: rasterized.previewUrl,
+          base64Data: rasterized.base64Data,
+          mimeTypeForAi: 'image/jpeg',
+        };
+      }
     }
   } catch (err) {
     console.warn('extractEmbeddedStreamFromVector exception:', err);
@@ -991,34 +1003,29 @@ export async function extractEmbeddedImageFromVector(file: File): Promise<{ prev
   const tiffResult = await extractTiffFromBinaryEps(file);
   if (tiffResult) return tiffResult;
 
-  // 2. Read first 25MB text of file to check AI Private Data & XMP
-  let psText = '';
+  // 2. Scan for Adobe Illustrator Private Data (%AI9_PrivateDataBegin -> PDF)
   try {
-    const sliceSize = Math.min(file.size, 25 * 1024 * 1024);
-    const buffer = await file.slice(0, sliceSize).arrayBuffer();
-    const textDecoder = new TextDecoder('latin1');
-    psText = textDecoder.decode(buffer);
-  } catch (e) {
-    console.warn('Error reading vector file text slice:', e);
-  }
-
-  if (psText) {
-    // 2a. Check Adobe Illustrator Private Data (%AI9_PrivateDataBegin -> PDF)
-    const aiPrivateResult = await extractAiPrivateDataPdf(psText);
+    const buffer = await file.arrayBuffer();
+    const aiPrivateResult = await extractAiPrivateDataPdf(buffer);
     if (aiPrivateResult) return aiPrivateResult;
-
-    // 2b. XMP Packet thumbnail or EPSI hex preview (<xmpGImg:image> / %%BeginPreview)
-    const xmpResult = await extractEmbeddedXmpThumbnail(file);
-    if (xmpResult) return xmpResult;
+  } catch (e) {
+    console.warn('extractAiPrivateDataPdf error:', e);
   }
 
   // 3. Embedded PDF or JPEG stream across full binary buffer
   const streamResult = await extractEmbeddedStreamFromVector(file);
   if (streamResult) return streamResult;
 
-  // 4. Client-Side Pure PostScript Vector Canvas Interpreter
-  if (psText) {
+  // 4. XMP Packet thumbnail or EPSI hex preview (<xmpGImg:image> / %%BeginPreview)
+  const xmpResult = await extractEmbeddedXmpThumbnail(file);
+  if (xmpResult) return xmpResult;
+
+  // 5. Client-Side Pure PostScript Vector Canvas Interpreter for small files (< 1MB)
+  if (file.size < 1024 * 1024) {
     try {
+      const buffer = await file.arrayBuffer();
+      const textDecoder = new TextDecoder('latin1');
+      const psText = textDecoder.decode(buffer);
       const psCanvasRes = renderPostScriptCodeToCanvas(psText, 1200);
       if (psCanvasRes) {
         return {
@@ -1171,128 +1178,139 @@ export async function prepareFileForAi(file: File): Promise<{
   vectorSemanticText?: string;
   cleanSubject?: string;
 }> {
-  const category = getFormatCategory(file.name, file.type);
-  const ext = getFileExtension(file.name);
-
-  // 1. VIDEO HANDLING
-  if (category === 'video') {
-    try {
-      const frameDataUrl = await captureVideoFrame(file);
-      const compressed = await compressImageForAi(frameDataUrl);
-      return {
-        previewUrl: frameDataUrl,
-        base64Data: compressed.base64Data,
-        mimeTypeForAi: 'image/jpeg',
-        isRealArtworkPreview: true,
-      };
-    } catch (e) {
-      console.warn('Fallback for video frame capture:', e);
-    }
+  if (inFlightPrepCache.has(file)) {
+    return inFlightPrepCache.get(file)!;
   }
 
-  // 2. SVG VECTOR HANDLING (Render vector to high-res raster image)
-  if (ext === 'svg' || file.type.includes('svg')) {
-    try {
-      const svgResult = await renderSvgToPng(file);
-      return {
-        previewUrl: svgResult.dataUrl,
-        base64Data: svgResult.base64Data,
-        mimeTypeForAi: 'image/jpeg',
-        isRealArtworkPreview: true,
-      };
-    } catch (e) {
-      console.warn('SVG canvas render fallback:', e);
-    }
-  }
+  const prepPromise = (async () => {
+    const category = getFormatCategory(file.name, file.type);
+    const ext = getFileExtension(file.name);
 
-  // 3. EPS, AI, PS, PDF VECTOR HANDLING
-  if (['eps', 'ai', 'ps', 'pdf', 'cdr'].includes(ext) || category === 'vector' || category === 'pdf') {
-    let vectorSemanticText = '';
-    let cleanSubject = cleanVectorSubject(file.name);
-
-    try {
-      // Extract rich vector metadata (Titles, Descriptions, Keywords, Layer names, Text, Colors)
-      const textDecoder = new TextDecoder('latin1');
-      const headBuffer = await file.slice(0, Math.min(file.size, 2 * 1024 * 1024)).arrayBuffer();
-      const psHeadText = textDecoder.decode(headBuffer);
-      const semInfo = extractVectorSemanticInfo(psHeadText, file.name);
-      vectorSemanticText = semInfo.summaryText;
-      cleanSubject = semInfo.cleanSubject;
-    } catch (e) {
-      console.warn('Vector semantic info extraction error:', e);
-    }
-
-    try {
-      // 1st Priority: Server-Side Ghostscript Vector Renderer (renders 100% genuine PostScript artwork)
-      const serverRendered = await renderVectorViaServer(file);
-      if (serverRendered && serverRendered.base64Data) {
+    // 1. VIDEO HANDLING
+    if (category === 'video') {
+      try {
+        const frameDataUrl = await captureVideoFrame(file);
+        const compressed = await compressImageForAi(frameDataUrl);
         return {
-          ...serverRendered,
+          previewUrl: frameDataUrl,
+          base64Data: compressed.base64Data,
+          mimeTypeForAi: 'image/jpeg',
           isRealArtworkPreview: true,
+        };
+      } catch (e) {
+        console.warn('Fallback for video frame capture:', e);
+      }
+    }
+
+    // 2. SVG VECTOR HANDLING (Render vector to high-res raster image)
+    if (ext === 'svg' || file.type.includes('svg')) {
+      try {
+        const svgResult = await renderSvgToPng(file);
+        return {
+          previewUrl: svgResult.dataUrl,
+          base64Data: svgResult.base64Data,
+          mimeTypeForAi: 'image/jpeg',
+          isRealArtworkPreview: true,
+        };
+      } catch (e) {
+        console.warn('SVG canvas render fallback:', e);
+      }
+    }
+
+    // 3. EPS, AI, PS, PDF VECTOR HANDLING
+    if (['eps', 'ai', 'ps', 'pdf', 'cdr'].includes(ext) || category === 'vector' || category === 'pdf') {
+      let vectorSemanticText = '';
+      let cleanSubject = cleanVectorSubject(file.name);
+
+      try {
+        // Extract rich vector metadata (Titles, Descriptions, Keywords, Layer names, Text, Colors) from first 1MB
+        const textDecoder = new TextDecoder('latin1');
+        const headBuffer = await file.slice(0, Math.min(file.size, 1024 * 1024)).arrayBuffer();
+        const psHeadText = textDecoder.decode(headBuffer);
+        const semInfo = extractVectorSemanticInfo(psHeadText, file.name);
+        vectorSemanticText = semInfo.summaryText;
+        cleanSubject = semInfo.cleanSubject;
+      } catch (e) {
+        console.warn('Vector semantic info extraction error:', e);
+      }
+
+      try {
+        // 1st Priority: Native Client-Side Zero-Latency Vector Extractor (AI Private Data / Binary TIFF / PDF Stream)
+        const extracted = await extractEmbeddedImageFromVector(file);
+        if (extracted && extracted.base64Data) {
+          return {
+            ...extracted,
+            isRealArtworkPreview: true,
+            vectorSemanticText,
+            cleanSubject,
+          };
+        }
+
+        // 2nd Priority: Server-Side Ghostscript Vector Renderer for small PostScript files (< 4MB)
+        if (file.size <= 4 * 1024 * 1024) {
+          const serverRendered = await renderVectorViaServer(file);
+          if (serverRendered && serverRendered.base64Data) {
+            return {
+              ...serverRendered,
+              isRealArtworkPreview: true,
+              vectorSemanticText,
+              cleanSubject,
+            };
+          }
+        }
+
+        // 3rd Priority: Clean vector artboard showcase canvas preview (base64Data is empty so AI doesn't see placeholder badge)
+        const fallbackBadge = await renderEpsCanvasPreview(file);
+        return {
+          previewUrl: fallbackBadge.previewUrl,
+          base64Data: '', // DO NOT send placeholder badge to AI
+          mimeTypeForAi: 'image/jpeg',
+          isRealArtworkPreview: false,
           vectorSemanticText,
           cleanSubject,
         };
+      } catch (e) {
+        console.warn('Error extracting/rendering vector preview:', e);
       }
+    }
 
-      // 2nd Priority: Extract embedded JPEG/PNG/TIFF/PDF preview image from EPS/AI/PDF
-      const extracted = await extractEmbeddedImageFromVector(file);
-      if (extracted && extracted.base64Data) {
+    // 4. STANDARD RASTER IMAGE HANDLING (JPG, PNG, WEBP, TIFF, GIF, HEIC)
+    if (category === 'image') {
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        const compressed = await compressImageForAi(dataUrl);
         return {
-          ...extracted,
+          previewUrl: dataUrl,
+          base64Data: compressed.base64Data,
+          mimeTypeForAi: compressed.mimeType,
           isRealArtworkPreview: true,
-          vectorSemanticText,
-          cleanSubject,
         };
+      } catch (e) {
+        console.error('Error reading image file:', e);
       }
+    }
 
-      // 3rd Priority: Clean vector artboard showcase canvas preview (base64Data is empty so AI doesn't see placeholder badge)
+    // 5. FINAL FALLBACK FOR ANY OTHER FORMAT
+    try {
       const fallbackBadge = await renderEpsCanvasPreview(file);
       return {
         previewUrl: fallbackBadge.previewUrl,
-        base64Data: '', // DO NOT send placeholder badge to AI
+        base64Data: '',
         mimeTypeForAi: 'image/jpeg',
         isRealArtworkPreview: false,
-        vectorSemanticText,
-        cleanSubject,
       };
     } catch (e) {
-      console.warn('Error extracting/rendering vector preview:', e);
-    }
-  }
-
-  // 4. STANDARD RASTER IMAGE HANDLING (JPG, PNG, WEBP, TIFF, GIF, HEIC)
-  if (category === 'image') {
-    try {
-      const dataUrl = await readFileAsDataUrl(file);
-      const compressed = await compressImageForAi(dataUrl);
       return {
-        previewUrl: dataUrl,
-        base64Data: compressed.base64Data,
-        mimeTypeForAi: compressed.mimeType,
-        isRealArtworkPreview: true,
+        previewUrl: '',
+        base64Data: '',
+        mimeTypeForAi: 'image/jpeg',
+        isRealArtworkPreview: false,
       };
-    } catch (e) {
-      console.error('Error reading image file:', e);
     }
-  }
+  })();
 
-  // 5. FINAL FALLBACK FOR ANY OTHER FORMAT
-  try {
-    const fallbackBadge = await renderEpsCanvasPreview(file);
-    return {
-      previewUrl: fallbackBadge.previewUrl,
-      base64Data: '',
-      mimeTypeForAi: 'image/jpeg',
-      isRealArtworkPreview: false,
-    };
-  } catch (e) {
-    return {
-      previewUrl: '',
-      base64Data: '',
-      mimeTypeForAi: 'image/jpeg',
-      isRealArtworkPreview: false,
-    };
-  }
+  inFlightPrepCache.set(file, prepPromise);
+  return prepPromise;
 }
 
 
