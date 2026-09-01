@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import zlib from 'zlib';
+import crypto from 'crypto';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Type } from '@google/genai';
@@ -213,7 +214,7 @@ app.get('/api/key-status', (req, res) => {
 });
 
 function normalizeGeminiModel(model?: string): string {
-  if (!model) return 'gemini-3.5-flash';
+  if (!model) return 'gemini-3.5-flash-lite';
   const m = model.toLowerCase().trim();
   if (
     m === 'gemini-2.5-flash' ||
@@ -222,7 +223,7 @@ function normalizeGeminiModel(model?: string): string {
     m === 'gemini-flash' ||
     m === 'flash'
   ) {
-    return 'gemini-3.5-flash';
+    return 'gemini-3.5-flash-lite';
   }
   if (
     m === 'gemini-2.5-pro' ||
@@ -240,13 +241,13 @@ function normalizeGeminiModel(model?: string): string {
     return 'gemini-3.1-flash-lite';
   }
   if (m === 'gemini-3.5-flash') {
-    return 'gemini-3.5-flash';
+    return 'gemini-3.5-flash-lite';
   }
   if (m === 'gemini-3.6-flash') {
-    return 'gemini-3.6-flash';
+    return 'gemini-3.5-flash-lite';
   }
   if (m === 'gemini-3.7-flash') {
-    return 'gemini-3.7-flash';
+    return 'gemini-3.5-flash-lite';
   }
   return model;
 }
@@ -890,10 +891,10 @@ Inspect the artwork carefully and generate premium, 100% original and content-ac
       await paceGeminiRequest(async () => {
         const selectedModel = normalizeGeminiModel(model);
         const candidateModels = Array.from(new Set([
-          selectedModel,
-          'gemini-3.5-flash',
           'gemini-3.5-flash-lite',
           'gemini-3.1-flash-lite',
+          selectedModel,
+          'gemini-3.5-flash',
           'gemini-3.6-flash',
           'gemini-3.7-flash',
         ]));

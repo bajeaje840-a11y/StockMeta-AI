@@ -28,29 +28,29 @@ export const AI_PROVIDERS: Record<AiProvider, ProviderMeta> = {
     keyPlaceholder: 'AQ... or AIzaSy... (or leave empty for Free Built-in AI)',
     keyHelpUrl: 'https://aistudio.google.com/app/apikey',
     keyFormatHint: 'Google AI Studio key (starts with "AQ." or "AIzaSy...") or leave empty',
-    defaultModel: 'gemini-3.5-flash',
+    defaultModel: 'gemini-3.5-flash-lite',
     requiresApiKey: false, // Can fall back to server rotation pool
     models: [
       {
-        id: 'gemini-3.5-flash',
-        name: 'Gemini 3.5 Flash ⚡ (Recommended)',
+        id: 'gemini-3.5-flash-lite',
+        name: 'Gemini 3.5 Flash Lite ⚡ (Recommended)',
         provider: 'gemini',
-        description: 'Ultra-fast multimodal stock vision & keyword ranking (Recommended & Most Reliable)',
+        description: 'High-throughput lightweight vision indexing & tag extraction (Recommended & Most Reliable)',
         isVisionCapable: true,
         recommended: true,
-      },
-      {
-        id: 'gemini-3.5-flash-lite',
-        name: 'Gemini 3.5 Flash Lite',
-        provider: 'gemini',
-        description: 'High-throughput lightweight vision indexing & tag extraction',
-        isVisionCapable: true,
       },
       {
         id: 'gemini-3.1-flash-lite',
         name: 'Gemini 3.1 Flash Lite',
         provider: 'gemini',
         description: 'Lightweight vision indexing & tag extraction',
+        isVisionCapable: true,
+      },
+      {
+        id: 'gemini-3.5-flash',
+        name: 'Gemini 3.5 Flash',
+        provider: 'gemini',
+        description: 'Ultra-fast multimodal stock vision & keyword ranking',
         isVisionCapable: true,
       },
       {
@@ -212,7 +212,7 @@ export const AI_PROVIDERS: Record<AiProvider, ProviderMeta> = {
 export const DEFAULT_AI_CONFIG: AiConfig = {
   activeProvider: 'gemini',
   geminiKey: '',
-  geminiModel: 'gemini-3.5-flash',
+  geminiModel: 'gemini-3.5-flash-lite',
   openaiKey: '',
   openaiModel: 'gpt-4o-mini',
   openaiBaseUrl: '',
@@ -240,14 +240,16 @@ export function loadAiConfig(): AiConfig {
     // Auto-migrate legacy/deprecated or rate-limited Gemini models
     if (
       !config.geminiModel ||
+      config.geminiModel === 'gemini-3.5-flash' ||
+      config.geminiModel === 'gemini-3.6-flash' ||
+      config.geminiModel === 'gemini-3.7-flash' ||
       config.geminiModel === 'gemini-2.5-flash' ||
       config.geminiModel === 'gemini-2.5-pro' ||
       config.geminiModel === 'gemini-1.5-flash' ||
       config.geminiModel === 'gemini-1.5-pro' ||
-      config.geminiModel === 'gemini-2.0-flash' ||
-      config.geminiModel === 'gemini-3.7-flash'
+      config.geminiModel === 'gemini-2.0-flash'
     ) {
-      config.geminiModel = 'gemini-3.5-flash';
+      config.geminiModel = 'gemini-3.5-flash-lite';
     }
 
     return config;

@@ -113,7 +113,7 @@ export function sanitizeMicrostockMetadata(parsed: any, filename: string): {
 }
 
 export function normalizeGeminiModel(model?: string): string {
-  if (!model) return 'gemini-3.5-flash';
+  if (!model) return 'gemini-3.5-flash-lite';
   const m = model.toLowerCase().trim();
   if (
     m === 'gemini-2.5-flash' ||
@@ -122,7 +122,7 @@ export function normalizeGeminiModel(model?: string): string {
     m === 'gemini-flash' ||
     m === 'flash'
   ) {
-    return 'gemini-3.5-flash';
+    return 'gemini-3.5-flash-lite';
   }
   if (
     m === 'gemini-2.5-pro' ||
@@ -140,15 +140,15 @@ export function normalizeGeminiModel(model?: string): string {
     return 'gemini-3.1-flash-lite';
   }
   if (m === 'gemini-3.5-flash') {
-    return 'gemini-3.5-flash';
+    return 'gemini-3.5-flash-lite';
   }
   if (m === 'gemini-3.6-flash') {
-    return 'gemini-3.6-flash';
+    return 'gemini-3.5-flash-lite';
   }
   if (m === 'gemini-3.7-flash') {
-    return 'gemini-3.7-flash';
+    return 'gemini-3.5-flash-lite';
   }
-  return model;
+  return 'gemini-3.5-flash-lite';
 }
 
 /**
@@ -515,7 +515,7 @@ export async function generateGeminiMetadataDirectly(options: {
   }
 
   const selectedModel = normalizeGeminiModel(model);
-  const candidateModels = Array.from(new Set([selectedModel, 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.6-flash', 'gemini-3.7-flash']));
+  const candidateModels = Array.from(new Set(['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', selectedModel, 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.7-flash']));
   const targetKwCount = Math.max(25, Math.min(49, keywordCount || 49));
   const safeMime = mimeType?.startsWith('image/') ? mimeType.split(';')[0].trim() : 'image/jpeg';
 

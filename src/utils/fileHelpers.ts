@@ -85,6 +85,22 @@ export function readFileAsDataUrl(file: File): Promise<string> {
 }
 
 /**
+ * Reads a File object directly as base64 string without data URL prefix
+ */
+export function readFileAsBase64Only(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const res = (reader.result as string) || '';
+      const b64 = res.includes(',') ? res.split(',')[1] : res;
+      resolve(b64);
+    };
+    reader.onerror = (err) => reject(err);
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
  * Extracts a representative frame from a video file (MP4/MOV) as a PNG Data URL
  */
 export function captureVideoFrame(file: File): Promise<string> {

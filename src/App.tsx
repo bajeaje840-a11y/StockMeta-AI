@@ -84,7 +84,7 @@ export default function App() {
 
     if (provider === 'gemini') {
       apiKey = aiConfig.geminiKey || '';
-      model = aiConfig.geminiModel || 'gemini-2.5-flash';
+      model = aiConfig.geminiModel || 'gemini-3.5-flash';
     } else if (provider === 'openai') {
       apiKey = aiConfig.openaiKey || '';
       model = aiConfig.openaiModel || 'gpt-4o-mini';
