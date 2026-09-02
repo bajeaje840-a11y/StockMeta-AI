@@ -507,7 +507,19 @@ app.post('/api/test-key', async (req, res) => {
 });
 
 /**
- * Multi-Strategy High-Fidelity Vector Preview & AI Visual Renderer (Ghostscript & ImageMagick)
+ * Helper to check if filename is generic/sequential (e.g. 001.eps, 002.eps, img_1.eps)
+ */
+function isGenericFilename(filename?: string): boolean {
+  if (!filename) return true;
+  const stripped = filename.replace(/\.[^/.]+$/, '').trim().toLowerCase();
+  return (
+    /^\d+$/.test(stripped) ||
+    /^(img|image|file|asset|vector|art|graphic|stock|item|icon|untitled|temp|copy)[_\s-]*\d*$/i.test(stripped)
+  );
+}
+
+/**
+ * Multi-Strategy High-Fidelity Vector Preview & AI Visual Renderer (Ghostscript & ImageMagick & Illustrator PrivateData)
  * Converts EPS, AI, PS, PDF vector files directly into color-accurate, high-resolution JPEG images.
  */
 export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string): Buffer | null {
@@ -526,13 +538,13 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
       const tiffOffset = fileBuffer.readUInt32LE(20);
       const tiffLength = fileBuffer.readUInt32LE(24);
 
-      // Try TIFF preview embedded in binary header
+      // 1a. Try TIFF preview embedded in binary header
       if (tiffOffset > 0 && tiffLength > 100 && fileBuffer.length >= tiffOffset + tiffLength) {
         const tiffPath = path.join(tmpDir, `embedded_${randId}.tif`);
         try {
-          fs.writeFileSync(tiffPath, fileBuffer.slice(tiffOffset, tiffOffset + tiffLength));
+          fs.writeFileSync(tiffPath, fileBuffer.subarray(tiffOffset, tiffOffset + tiffLength));
           execSync(`convert "${tiffPath}" "${outPath}"`, { timeout: 15000, stdio: 'pipe' });
-          if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1000) {
+          if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
             return fs.readFileSync(outPath);
           }
         } catch (e) {
@@ -542,22 +554,113 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
         }
       }
 
-      if (psOffset > 0 && psLength > 100 && fileBuffer.length >= psOffset + psLength) {
-        cleanPsBuffer = fileBuffer.slice(psOffset, psOffset + psLength);
+      // 1b. Clean PostScript stream by stripping the 32-byte binary header
+      const psStart = fileBuffer.indexOf(Buffer.from('%!PS-Adobe'));
+      if (psStart !== -1) {
+        cleanPsBuffer = fileBuffer.subarray(psStart);
+      } else if (psOffset > 0 && psOffset < fileBuffer.length) {
+        const end = (psLength > 0 && psOffset + psLength <= fileBuffer.length) ? psOffset + psLength : fileBuffer.length;
+        cleanPsBuffer = fileBuffer.subarray(psOffset, end);
       }
     }
 
-    // Strategy 2: Check for embedded PDF stream (%PDF-) inside cleanPsBuffer or raw fileBuffer
+    // Strategy 2: Multi-chunk Adobe Illustrator PrivateData PDF extraction (%AI9_PrivateDataBegin, %AI12, %AI24, %%BeginData)
+    try {
+      const beginMagic = Buffer.from('PrivateDataBegin');
+      const endMagic = Buffer.from('PrivateDataEnd');
+      const chunks: { start: number; end: number }[] = [];
+      let pos = 0;
+      let totalHexChars = 0;
+
+      while (pos < cleanPsBuffer.length - beginMagic.length) {
+        const beginIdx = cleanPsBuffer.indexOf(beginMagic, pos);
+        if (beginIdx === -1) break;
+
+        let chunkStart = beginIdx + beginMagic.length;
+        while (chunkStart < cleanPsBuffer.length && cleanPsBuffer[chunkStart] !== 0x0A && cleanPsBuffer[chunkStart] !== 0x0D) {
+          chunkStart++;
+        }
+
+        const endIdx = cleanPsBuffer.indexOf(endMagic, chunkStart);
+        if (endIdx === -1) break;
+
+        let chunkEnd = endIdx;
+        while (chunkEnd > chunkStart && cleanPsBuffer[chunkEnd] !== 0x0A && cleanPsBuffer[chunkEnd] !== 0x0D) {
+          chunkEnd--;
+        }
+
+        chunks.push({ start: chunkStart, end: chunkEnd });
+        totalHexChars += (chunkEnd - chunkStart);
+        pos = endIdx + endMagic.length;
+      }
+
+      if (chunks.length > 0 && totalHexChars > 100) {
+        const outU8 = Buffer.alloc(Math.floor(totalHexChars / 2));
+        let outIdx = 0;
+        let highNibble = -1;
+
+        for (const chunk of chunks) {
+          for (let i = chunk.start; i < chunk.end; i++) {
+            const b = cleanPsBuffer[i];
+            let val = -1;
+            if (b >= 0x30 && b <= 0x39) val = b - 0x30;
+            else if (b >= 0x61 && b <= 0x66) val = b - 0x61 + 10;
+            else if (b >= 0x41 && b <= 0x46) val = b - 0x41 + 10;
+
+            if (val !== -1) {
+              if (highNibble === -1) {
+                highNibble = val;
+              } else {
+                outU8[outIdx++] = (highNibble << 4) | val;
+                highNibble = -1;
+              }
+            }
+          }
+        }
+
+        const decoded = outU8.subarray(0, outIdx);
+        let decompressed = decoded;
+        if (decoded.length > 2 && (decoded[0] === 0x78 || decoded[0] === 0x1F)) {
+          try {
+            decompressed = zlib.inflateSync(decoded);
+          } catch (zErr) {
+            try {
+              decompressed = zlib.inflateRawSync(decoded);
+            } catch {}
+          }
+        }
+
+        const pdfIdx = decompressed.indexOf('%PDF-');
+        if (pdfIdx !== -1) {
+          const pdfPath = path.join(tmpDir, `priv_${randId}.pdf`);
+          try {
+            fs.writeFileSync(pdfPath, decompressed.subarray(pdfIdx));
+            execSync(
+              `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=95 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -dFirstPage=1 -dLastPage=1 -sOutputFile="${outPath}" "${pdfPath}"`,
+              { timeout: 15000, stdio: 'pipe' }
+            );
+            if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+              return fs.readFileSync(outPath);
+            }
+          } catch (e) {
+          } finally {
+            if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath);
+          }
+        }
+      }
+    } catch (privErr) {}
+
+    // Strategy 3: Check for embedded PDF stream (%PDF-) inside cleanPsBuffer or raw fileBuffer
     const pdfIdx = cleanPsBuffer.indexOf('%PDF-');
     if (pdfIdx !== -1) {
       const pdfPath = path.join(tmpDir, `embedded_${randId}.pdf`);
       try {
-        fs.writeFileSync(pdfPath, cleanPsBuffer.slice(pdfIdx));
+        fs.writeFileSync(pdfPath, cleanPsBuffer.subarray(pdfIdx));
         execSync(
           `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=95 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -dFirstPage=1 -dLastPage=1 -sOutputFile="${outPath}" "${pdfPath}"`,
           { timeout: 15000, stdio: 'pipe' }
         );
-        if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1000) {
+        if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
           return fs.readFileSync(outPath);
         }
       } catch (e) {
@@ -565,36 +668,6 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
       } finally {
         if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath);
       }
-    }
-
-    // Strategy 3: Check Illustrator Private Data (%AI9_PrivateDataBegin -> inflate -> %PDF-)
-    const strContent = cleanPsBuffer.slice(0, Math.min(cleanPsBuffer.length, 3000000)).toString('latin1');
-    const privBeginMatch = strContent.match(/%AI\d+_PrivateDataBegin[\r\n]+([\s\S]*?)%AI\d+_PrivateDataEnd/i);
-    if (privBeginMatch && privBeginMatch[1]) {
-      try {
-        const hexStr = privBeginMatch[1].replace(/[\r\n%]/g, '').trim();
-        const hexBuf = Buffer.from(hexStr, 'hex');
-        let decompressed = hexBuf;
-        if (hexBuf.length > 2 && hexBuf[0] === 0x78) {
-          try { decompressed = zlib.inflateSync(hexBuf); } catch (zErr) {}
-        }
-        const innerPdfIdx = decompressed.indexOf('%PDF-');
-        if (innerPdfIdx !== -1) {
-          const pdfPath = path.join(tmpDir, `priv_${randId}.pdf`);
-          try {
-            fs.writeFileSync(pdfPath, decompressed.slice(innerPdfIdx));
-            execSync(
-              `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=95 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -dFirstPage=1 -dLastPage=1 -sOutputFile="${outPath}" "${pdfPath}"`,
-              { timeout: 15000, stdio: 'pipe' }
-            );
-            if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1000) {
-              return fs.readFileSync(outPath);
-            }
-          } catch (e) {} finally {
-            if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath);
-          }
-        }
-      } catch (e) {}
     }
 
     // Strategy 4: Scan for embedded JPEG byte streams (0xFF 0xD8 0xFF ... 0xFF 0xD9)
@@ -618,14 +691,15 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
       }
     }
     if (bestStart !== -1 && bestEnd > bestStart) {
-      const jpegSlice = cleanPsBuffer.slice(bestStart, bestEnd);
+      const jpegSlice = cleanPsBuffer.subarray(bestStart, bestEnd);
       fs.writeFileSync(outPath, jpegSlice);
-      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1000) {
+      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
         return fs.readFileSync(outPath);
       }
     }
 
     // Strategy 5: Check XMP base64 thumbnail (<xmpGImg:image> / <photoshop:Thumbnail>)
+    const strContent = cleanPsBuffer.subarray(0, Math.min(cleanPsBuffer.length, 5000000)).toString('latin1');
     const xmpMatch = strContent.match(/<(?:xmpGImg|xapGImg|photoshop):(?:image|Thumbnail)>([\s\S]*?)<\/(?:xmpGImg|xapGImg|photoshop):(?:image|Thumbnail)>/i);
     if (xmpMatch && xmpMatch[1]) {
       try {
@@ -633,7 +707,7 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
         const xmpBuf = Buffer.from(cleanB64, 'base64');
         if (xmpBuf.length > 500) {
           fs.writeFileSync(outPath, xmpBuf);
-          if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1000) {
+          if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
             return fs.readFileSync(outPath);
           }
         }
@@ -649,7 +723,7 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
         `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -dEPSCrop -sDEVICE=jpeg -dJPEGQ=95 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${psPath}"`,
         { timeout: 15000, stdio: 'pipe' }
       );
-      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1000) {
+      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
         return fs.readFileSync(outPath);
       }
     } catch (e) {}
@@ -660,7 +734,7 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
         `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=95 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${psPath}"`,
         { timeout: 15000, stdio: 'pipe' }
       );
-      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1000) {
+      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
         return fs.readFileSync(outPath);
       }
     } catch (e) {}
@@ -668,7 +742,15 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
     // Strategy 8: ImageMagick Convert
     try {
       execSync(`convert -density 150 "${psPath}[0]" -background white -flatten "${outPath}"`, { timeout: 15000, stdio: 'pipe' });
-      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1000) {
+      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+        return fs.readFileSync(outPath);
+      }
+    } catch (e) {}
+
+    // Strategy 9: ImageMagick with sRGB colorspace
+    try {
+      execSync(`convert -colorspace sRGB -density 150 "${psPath}" -background white -flatten "${outPath}"`, { timeout: 15000, stdio: 'pipe' });
+      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
         return fs.readFileSync(outPath);
       }
     } catch (e) {} finally {
@@ -828,7 +910,8 @@ app.post('/api/generate-metadata', async (req, res) => {
 
     const targetKwCount = Math.max(25, Math.min(49, keywordCount || 49));
 
-    const cleanSubject = clientCleanSubject || (filename
+    const isGeneric = isGenericFilename(filename);
+    const cleanSubject = clientCleanSubject || (filename && !isGeneric
       ? filename
           .replace(/\.[^/.]+$/, '')
           .replace(/^create[_\s-]+/i, '')
@@ -842,7 +925,7 @@ Analyze the provided visual asset (photo, texture, vector illustration, icon set
 
 DEEP VISUAL & CONTENT ANALYSIS REQUIREMENTS:
 1. Visual Content & Main Subjects: Thoroughly examine the visual artwork/image or vector properties. Identify the exact objects, design style, vector illustrations, badges, icons, typography, shapes, symbols, background scenery, and color palette present in the artwork.
-2. Vector Graphics Rule: If analyzing a vector graphic or EPS/AI file, generate metadata describing the actual subject matter and visual objects. NEVER generate metadata about an "EPS file", "EPS badge", or "file icon".
+2. Vector Graphics Rule: If analyzing a vector graphic or EPS/AI file, generate metadata describing the actual subject matter and visual objects. NEVER generate metadata about an "EPS file", "EPS badge", "euro symbol", or "file icon".
 3. Concept & Mood: Identify practical concepts, industries, and intended use cases (e.g. web banners, posters, mobile UI, packaging, advertising, branding).
 4. Composition & Art Style: Recognize whether it is flat vector art, isometric, vintage emblem, line art, modern minimalist, geometric pattern, or 3D render.
 
@@ -875,7 +958,7 @@ JSON Response Schema:
 Filename: "${filename || 'stock_media'}"
 Unique File Fingerprint (SHA256 Hash Seed): ${fileHash}
 Processing Timestamp: ${timestamp}
-${cleanSubject ? `Primary Subject: "${cleanSubject}"` : ''}
+${cleanSubject ? `Primary Subject: "${cleanSubject}"` : (isGeneric ? `Note: Filename "${filename}" is a generic batch label. Extract the true subject entirely from the visual artwork.` : '')}
 ${isVector ? `Asset Format: Scalable Vector Graphic / Vector Artwork Asset.` : ''}
 ${vectorSemanticText ? `\n--- EMBEDDED VECTOR FILE PROPERTIES & METADATA ---\n${vectorSemanticText}\n-----------------------------------------------` : ''}
 Target Keyword Count: Exactly ${targetKwCount} unique keywords.

@@ -33,11 +33,22 @@ export function getFileExtension(filename: string): string {
   return parts.length > 1 ? parts.pop()!.toLowerCase() : '';
 }
 
+export function isGenericFilename(filename: string): boolean {
+  const stripped = filename.replace(/\.[^/.]+$/, '').trim().toLowerCase();
+  return (
+    /^\d+$/.test(stripped) ||
+    /^(img|image|file|asset|vector|art|graphic|stock|item|icon|untitled|temp|copy)[_\s-]*\d*$/i.test(stripped)
+  );
+}
+
 /**
  * Turns machine filenames like "fire_truck_icon_set_202608242233.eps"
  * or "Create_monster_truck_icon_set_2026.eps" into a clean human subject "Fire Truck Icon Set"
  */
 export function cleanVectorSubject(filename: string): string {
+  if (isGenericFilename(filename)) {
+    return '';
+  }
   let name = filename.replace(/\.[^/.]+$/, ''); // Remove extension
   name = name.replace(/^create[_\s-]+/i, ''); // Remove "create_" prefix
   name = name.replace(/_\d{8,}(?:_\d+)?/g, ''); // Remove timestamp suffixes like _202608242233
@@ -769,7 +780,7 @@ export async function extractEmbeddedXmpThumbnail(file: File): Promise<{ preview
 /**
  * Extracts native PDF / Illustrator document from Adobe Illustrator EPS Private Data
  * (%AI9_PrivateDataBegin, %AI12_PrivateDataBegin, %AI24_PrivateDataBegin, or %%BeginData: ... Hex)
- * Uses high-speed zero-allocation binary byte scanning to prevent memory spikes
+ * Uses high-speed multi-chunk zero-allocation binary byte scanning to prevent memory spikes
  */
 export async function extractAiPrivateDataPdf(
   buffer: ArrayBuffer
@@ -779,60 +790,71 @@ export async function extractAiPrivateDataPdf(
     const beginMagic = [0x50, 0x72, 0x69, 0x76, 0x61, 0x74, 0x65, 0x44, 0x61, 0x74, 0x61, 0x42, 0x65, 0x67, 0x69, 0x6E]; // PrivateDataBegin
     const endMagic = [0x50, 0x72, 0x69, 0x76, 0x61, 0x74, 0x65, 0x44, 0x61, 0x74, 0x61, 0x45, 0x6E, 0x64]; // PrivateDataEnd
 
-    let pStart = -1;
-    let pEnd = -1;
+    const chunks: { start: number; end: number }[] = [];
+    let pos = 0;
+    let totalHexChars = 0;
 
-    for (let i = 0; i < bytes.length - beginMagic.length; i++) {
-      if (bytes[i] === 0x50 && bytes[i + 1] === 0x72) { // 'Pr'
-        let match = true;
-        for (let k = 0; k < beginMagic.length; k++) {
-          if (bytes[i + k] !== beginMagic[k]) { match = false; break; }
-        }
-        if (match) {
-          let idx = i + beginMagic.length;
-          while (idx < bytes.length && bytes[idx] !== 0x0A && bytes[idx] !== 0x0D) idx++;
-          pStart = idx;
-          break;
+    while (pos < bytes.length - beginMagic.length) {
+      let beginIdx = -1;
+      for (let i = pos; i <= bytes.length - beginMagic.length; i++) {
+        if (bytes[i] === 0x50 && bytes[i + 1] === 0x72) {
+          let match = true;
+          for (let k = 0; k < beginMagic.length; k++) {
+            if (bytes[i + k] !== beginMagic[k]) { match = false; break; }
+          }
+          if (match) { beginIdx = i; break; }
         }
       }
-    }
+      if (beginIdx === -1) break;
 
-    if (pStart !== -1) {
-      for (let i = pStart; i < bytes.length - endMagic.length; i++) {
-        if (bytes[i] === 0x50 && bytes[i + 1] === 0x72) { // 'Pr'
+      let chunkStart = beginIdx + beginMagic.length;
+      while (chunkStart < bytes.length && bytes[chunkStart] !== 0x0A && bytes[chunkStart] !== 0x0D) {
+        chunkStart++;
+      }
+
+      let endIdx = -1;
+      for (let i = chunkStart; i <= bytes.length - endMagic.length; i++) {
+        if (bytes[i] === 0x50 && bytes[i + 1] === 0x72) {
           let match = true;
           for (let k = 0; k < endMagic.length; k++) {
             if (bytes[i + k] !== endMagic[k]) { match = false; break; }
           }
-          if (match) {
-            let idx = i;
-            while (idx > pStart && bytes[idx] !== 0x0A && bytes[idx] !== 0x0D) idx--;
-            pEnd = idx;
-            break;
-          }
+          if (match) { endIdx = i; break; }
         }
       }
+      if (endIdx === -1) break;
+
+      let chunkEnd = endIdx;
+      while (chunkEnd > chunkStart && bytes[chunkEnd] !== 0x0A && bytes[chunkEnd] !== 0x0D) {
+        chunkEnd--;
+      }
+
+      chunks.push({ start: chunkStart, end: chunkEnd });
+      totalHexChars += (chunkEnd - chunkStart);
+      pos = endIdx + endMagic.length;
     }
 
-    if (pStart !== -1 && pEnd > pStart) {
-      const maxOutLen = Math.floor((pEnd - pStart) / 2);
+    if (chunks.length > 0 && totalHexChars > 100) {
+      const maxOutLen = Math.floor(totalHexChars / 2);
       const outU8 = new Uint8Array(maxOutLen);
       let outIdx = 0;
       let highNibble = -1;
 
-      for (let i = pStart; i < pEnd; i++) {
-        const b = bytes[i];
-        let val = -1;
-        if (b >= 0x30 && b <= 0x39) val = b - 0x30;       // 0-9
-        else if (b >= 0x61 && b <= 0x66) val = b - 0x61 + 10; // a-f
-        else if (b >= 0x41 && b <= 0x46) val = b - 0x41 + 10; // A-F
+      for (const chunk of chunks) {
+        for (let i = chunk.start; i < chunk.end; i++) {
+          const b = bytes[i];
+          let val = -1;
+          if (b >= 0x30 && b <= 0x39) val = b - 0x30;       // 0-9
+          else if (b >= 0x61 && b <= 0x66) val = b - 0x61 + 10; // a-f
+          else if (b >= 0x41 && b <= 0x46) val = b - 0x41 + 10; // A-F
 
-        if (val !== -1) {
-          if (highNibble === -1) {
-            highNibble = val;
-          } else {
-            outU8[outIdx++] = (highNibble << 4) | val;
-            highNibble = -1;
+          if (val !== -1) {
+            if (highNibble === -1) {
+              highNibble = val;
+            } else {
+              outU8[outIdx++] = (highNibble << 4) | val;
+              highNibble = -1;
+            }
           }
         }
       }
