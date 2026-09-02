@@ -42,7 +42,6 @@ ensureImageMagickPolicy();
 const currentDir = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
 
 const app = express();
-const PORT = 3000;
 
 // Increase payload limit for base64 image uploads
 app.use(express.json({ limit: '50mb' }));
@@ -1708,9 +1707,11 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 
 async function startServer() {
   const isRunningCompiled = typeof __filename !== 'undefined' && __filename.endsWith('.cjs');
-  const isProduction = process.env.NODE_ENV === 'production' || isRunningCompiled;
+  const isExplicitDev = process.env.NODE_ENV === 'development';
+  // If explicitly in development AND not running the precompiled production bundle, mount Vite dev middleware
+  const useViteMiddleware = isExplicitDev && !isRunningCompiled;
 
-  if (!isProduction) {
+  if (useViteMiddleware) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -1718,9 +1719,14 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = fs.existsSync(path.join(process.cwd(), 'dist', 'index.html'))
-      ? path.join(process.cwd(), 'dist')
-      : __dirname;
+    const candidateDirs = [
+      path.join(process.cwd(), 'dist'),
+      typeof __dirname !== 'undefined' ? __dirname : '',
+      typeof __dirname !== 'undefined' ? path.join(__dirname, '..', 'dist') : '',
+      process.cwd(),
+    ].filter(Boolean);
+
+    const distPath = candidateDirs.find((dir) => fs.existsSync(path.join(dir, 'index.html'))) || candidateDirs[0];
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       const indexPath = path.join(distPath, 'index.html');
@@ -1732,9 +1738,45 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server listening at http://0.0.0.0:${PORT}`);
+  const DEFAULT_PORT = 3000;
+  const configuredPort = process.env.PORT ? parseInt(process.env.PORT, 10) : DEFAULT_PORT;
+
+  // In development, dev server must bind to port 3000 (Nginx reverse proxy on port 8080 forwards to 3000).
+  // In production (Cloud Run), the container must bind to process.env.PORT (typically 8080) for ingress.
+  const primaryPort = useViteMiddleware ? DEFAULT_PORT : configuredPort;
+
+  const server = app.listen(primaryPort, '0.0.0.0', () => {
+    console.log(`StockMeta AI server listening on http://0.0.0.0:${primaryPort} (${useViteMiddleware ? 'dev mode' : 'production mode'})`);
   });
+
+  server.on('error', (err: any) => {
+    if (err.code === 'EADDRINUSE' && primaryPort !== DEFAULT_PORT) {
+      console.warn(`Primary port ${primaryPort} in use; falling back to port ${DEFAULT_PORT}`);
+      app.listen(DEFAULT_PORT, '0.0.0.0', () => {
+        console.log(`Fallback server listening on http://0.0.0.0:${DEFAULT_PORT}`);
+      });
+    } else {
+      console.error('Server listen error:', err);
+    }
+  });
+
+  // If in production and primaryPort is not 3000, also bind to port 3000 as secondary port if available
+  if (!useViteMiddleware && primaryPort !== DEFAULT_PORT) {
+    try {
+      const secondaryServer = app.listen(DEFAULT_PORT, '0.0.0.0', () => {
+        console.log(`Secondary listener active on http://0.0.0.0:${DEFAULT_PORT}`);
+      });
+      secondaryServer.on('error', (err: any) => {
+        if (err.code === 'EADDRINUSE') {
+          // Port 3000 is occupied, which is completely expected in proxied environments
+        } else {
+          console.warn('Secondary listener notice:', err);
+        }
+      });
+    } catch {
+      // Ignore secondary listener errors
+    }
+  }
 }
 
 startServer();
