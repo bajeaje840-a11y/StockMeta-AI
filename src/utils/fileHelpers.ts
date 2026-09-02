@@ -438,7 +438,7 @@ export async function renderPdfBufferToCanvas(
     page = await pdf.getPage(1);
     const unscaledViewport = page.getViewport({ scale: 1.0 });
     const maxDim = Math.max(unscaledViewport.width, unscaledViewport.height, 1);
-    const targetScale = Math.max(0.2, Math.min(2.0, 1024 / maxDim));
+    const targetScale = Math.max(0.5, Math.min(3.0, 1536 / maxDim));
     const viewport = page.getViewport({ scale: targetScale });
 
     const canvas = document.createElement('canvas');
@@ -709,6 +709,38 @@ export async function extractTiffFromBinaryEps(
                     );
                     ctx.putImageData(imgData, 0, 0);
 
+                    // If TIFF is low resolution (< 600px) and a PostScript slice exists, try PostScript vector interpreter first
+                    if ((w < 600 || h < 600) && psOffset > 0 && psOffset < file.size) {
+                      try {
+                        const psEnd =
+                          psLength > 0 && psLength !== 0xffffffff && psOffset + psLength <= file.size
+                            ? psOffset + psLength
+                            : file.size;
+                        const psBuffer = await file.slice(psOffset, psEnd).arrayBuffer();
+                        const textDecoder = new TextDecoder('latin1');
+                        const psText = textDecoder.decode(psBuffer);
+
+                        // Try PDF stream first
+                        const pdfIdx = psText.indexOf('%PDF-');
+                        if (pdfIdx !== -1) {
+                          const renderedPdf = await renderPdfBufferToCanvas(psBuffer.slice(pdfIdx));
+                          if (renderedPdf) return renderedPdf;
+                        }
+
+                        // Try High-DPI PostScript canvas interpreter
+                        const psCanvas = renderPostScriptCodeToCanvas(psText, 1536);
+                        if (psCanvas && psCanvas.base64Data) {
+                          return {
+                            previewUrl: psCanvas.previewUrl,
+                            base64Data: psCanvas.base64Data,
+                            mimeTypeForAi: psCanvas.mimeTypeForAi,
+                          };
+                        }
+                      } catch (psSliceErr) {
+                        console.warn('PostScript slice render before low-res TIFF exception:', psSliceErr);
+                      }
+                    }
+
                     // Render over pure white background
                     const finalCanvas = document.createElement('canvas');
                     finalCanvas.width = w;
@@ -775,7 +807,7 @@ export async function extractTiffFromBinaryEps(
           if (aiPriv) return aiPriv;
 
           // 2e. Execute client-side PostScript canvas interpreter
-          const psCanvas = renderPostScriptCodeToCanvas(psText, 1200);
+          const psCanvas = renderPostScriptCodeToCanvas(psText, 1536);
           if (psCanvas) {
             return {
               previewUrl: psCanvas.previewUrl,
@@ -1751,30 +1783,7 @@ export async function prepareFileForAi(file: File): Promise<{
       }
 
       try {
-        // 1st Priority: Instant Binary EPS Header TIFF check (< 2ms, zero server dependencies)
-        // Decodes embedded TIFF or JPEG with UTIF or native canvas
-        const tiffExtracted = await extractTiffFromBinaryEps(file);
-        if (tiffExtracted && tiffExtracted.base64Data) {
-          return {
-            ...tiffExtracted,
-            isRealArtworkPreview: true,
-            vectorSemanticText,
-            cleanSubject,
-          };
-        }
-
-        // 2nd Priority: Embedded XMP Thumbnail extraction (zero server dependencies)
-        const xmpExtracted = await extractEmbeddedXmpThumbnail(file);
-        if (xmpExtracted && xmpExtracted.base64Data) {
-          return {
-            ...xmpExtracted,
-            isRealArtworkPreview: true,
-            vectorSemanticText,
-            cleanSubject,
-          };
-        }
-
-        // 3rd Priority: Embedded Streams (AI Private Data PDF / raw PDF / JPEG streams)
+        // 1st Priority: Embedded Native Vector Streams (AI Private Data PDF / raw PDF / high-res JPEG streams)
         const streamExtracted = await extractEmbeddedImageFromVector(file);
         if (streamExtracted && streamExtracted.base64Data) {
           return {
@@ -1785,15 +1794,23 @@ export async function prepareFileForAi(file: File): Promise<{
           };
         }
 
-        // 4th Priority: Pure Client-Side PostScript Vector Interpreter
+        // 2nd Priority: Pure Client-Side PostScript Vector Interpreter (High-DPI 1536px, full-frame, CMYK-accurate)
         // Interprets PostScript/Illustrator paths, CMYK/RGB colors, transforms, and compound shapes
         if (file.size <= 25 * 1024 * 1024) {
           try {
-            const sliceSize = Math.min(file.size, 10 * 1024 * 1024);
+            const sliceSize = Math.min(file.size, 12 * 1024 * 1024);
             const buffer = await file.slice(0, sliceSize).arrayBuffer();
             const textDecoder = new TextDecoder('latin1');
-            const psText = textDecoder.decode(buffer);
-            const psCanvasRes = renderPostScriptCodeToCanvas(psText, 1024);
+            let psText = textDecoder.decode(buffer);
+
+            // Append trailer if file is larger than sliceSize to ensure %%BoundingBox or %%HiResBoundingBox in trailer is captured
+            if (file.size > sliceSize) {
+              const tailSize = Math.min(file.size, 128 * 1024);
+              const tailBuf = await file.slice(file.size - tailSize).arrayBuffer();
+              psText += '\n%%Trailer\n' + textDecoder.decode(tailBuf);
+            }
+
+            const psCanvasRes = renderPostScriptCodeToCanvas(psText, 1536);
             if (psCanvasRes && psCanvasRes.base64Data) {
               return {
                 ...psCanvasRes,
@@ -1805,6 +1822,28 @@ export async function prepareFileForAi(file: File): Promise<{
           } catch (psErr) {
             console.warn('Client PostScript canvas interpreter fallback:', psErr);
           }
+        }
+
+        // 3rd Priority: Binary EPS Header TIFF check (decodes embedded TIFF or JPEG with UTIF or native canvas)
+        const tiffExtracted = await extractTiffFromBinaryEps(file);
+        if (tiffExtracted && tiffExtracted.base64Data) {
+          return {
+            ...tiffExtracted,
+            isRealArtworkPreview: true,
+            vectorSemanticText,
+            cleanSubject,
+          };
+        }
+
+        // 4th Priority: Embedded XMP Thumbnail extraction (zero server dependencies)
+        const xmpExtracted = await extractEmbeddedXmpThumbnail(file);
+        if (xmpExtracted && xmpExtracted.base64Data) {
+          return {
+            ...xmpExtracted,
+            isRealArtworkPreview: true,
+            vectorSemanticText,
+            cleanSubject,
+          };
         }
 
         // 5th Priority: Server-Side Vector Rendering (Optional fallback, strictly guarded to < 4MB for Vercel payload limits)

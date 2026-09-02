@@ -223,12 +223,12 @@ export const QueueTable: React.FC<QueueTableProps> = ({
 
                   {/* Thumbnail Preview */}
                   <td className="py-3 px-2.5">
-                    <div className="w-10 h-10 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-white/[0.08] overflow-hidden flex items-center justify-center relative shadow-2xs">
+                    <div className="w-10 h-10 shrink-0 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-white/[0.08] overflow-hidden flex items-center justify-center relative shadow-2xs aspect-square">
                       {file.previewUrl ? (
                         <img
                           src={file.previewUrl}
                           alt={file.name}
-                          className="w-full h-full object-cover"
+                          className="w-full h-full object-contain p-0.5"
                           loading="lazy"
                           onError={(e) => {
                             (e.currentTarget as HTMLImageElement).style.display = 'none';
