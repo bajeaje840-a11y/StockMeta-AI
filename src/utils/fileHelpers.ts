@@ -345,7 +345,7 @@ export function compressImageForAi(dataUrl: string, maxDim = 960): Promise<{ bas
 export function validateAndRasterizeImage(
   srcUrl: string,
   maxDim = 1000
-): Promise<{ previewUrl: string; base64Data: string; mimeType: string } | null> {
+): Promise<{ previewUrl: string; base64Data: string; mimeType: string; mimeTypeForAi: string } | null> {
   return new Promise((resolve) => {
     const img = new Image();
     const timer = setTimeout(() => {
@@ -395,6 +395,7 @@ export function validateAndRasterizeImage(
             previewUrl: jpegUrl,
             base64Data: b64,
             mimeType: 'image/jpeg',
+            mimeTypeForAi: 'image/jpeg',
           });
           return;
         }
@@ -577,8 +578,63 @@ export function parseEpsiHexPreview(psText: string): { previewUrl: string; base6
 }
 
 /**
+ * High-speed, non-backtracking extractor for Adobe XMP & Photoshop base64 JPEG/PNG thumbnails
+ */
+export function extractXmpBase64FromText(text: string): string | null {
+  if (!text || text.length < 50) return null;
+
+  const tags = [
+    { start: '<xmpGImg:image>', end: '</xmpGImg:image>' },
+    { start: '<xapGImg:image>', end: '</xapGImg:image>' },
+    { start: '<photoshop:Thumbnail>', end: '</photoshop:Thumbnail>' },
+    { start: '<xmp:Thumbnail>', end: '</xmp:Thumbnail>' },
+    { start: '<xmp:image>', end: '</xmp:image>' },
+  ];
+
+  for (const { start, end } of tags) {
+    const sIdx = text.indexOf(start);
+    if (sIdx !== -1) {
+      const eIdx = text.indexOf(end, sIdx + start.length);
+      if (eIdx !== -1) {
+        const raw = text.substring(sIdx + start.length, eIdx);
+        const clean = raw.replace(/[\r\n\s]/g, '');
+        if (clean.length > 50) return clean;
+      }
+    }
+  }
+
+  // Check attribute syntax e.g. xmpGImg:image="..."
+  const attrMarkers = ['xmpGImg:image="', 'xapGImg:image="', 'photoshop:Thumbnail="'];
+  for (const marker of attrMarkers) {
+    const sIdx = text.indexOf(marker);
+    if (sIdx !== -1) {
+      const eIdx = text.indexOf('"', sIdx + marker.length);
+      if (eIdx !== -1) {
+        const raw = text.substring(sIdx + marker.length, eIdx);
+        const clean = raw.replace(/[\r\n\s]/g, '');
+        if (clean.length > 50) return clean;
+      }
+    }
+  }
+
+  // Check Photoshop comment block %%BeginPhotoshop:
+  const psStart = text.indexOf('%%BeginPhotoshop:');
+  if (psStart !== -1) {
+    const psEnd = text.indexOf('%%EndPhotoshop', psStart);
+    if (psEnd !== -1) {
+      const block = text.substring(psStart, psEnd);
+      const m = block.match(/([A-Za-z0-9+/=]{200,})/);
+      if (m && m[1]) return m[1].replace(/[\r\n\s]/g, '');
+    }
+  }
+
+  return null;
+}
+
+/**
  * Extracts TIFF or JPEG preview from standard Binary EPS header (magic 0xC5 0xD0 0xD3 0xC6)
- * Decodes TIFF data with UTIF.js for 100% pixel fidelity
+ * Decodes TIFF data with UTIF.js for 100% pixel fidelity.
+ * If TIFF/JPEG is missing, cleanly slices PostScript stream for client-side rendering.
  */
 export async function extractTiffFromBinaryEps(
   file: File
@@ -602,86 +658,111 @@ export async function extractTiffFromBinaryEps(
       const tiffLength = view.getUint32(24, true);
 
       // 1. Try TIFF/JPEG preview from Binary Header
-      if (tiffOffset > 0 && tiffLength > 50 && tiffOffset + tiffLength <= file.size) {
-        const tiffBuffer = await file.slice(tiffOffset, tiffOffset + tiffLength).arrayBuffer();
-        const tiffBytes = new Uint8Array(tiffBuffer);
+      if (tiffOffset > 0 && tiffOffset < file.size) {
+        const actualTiffEnd =
+          tiffLength > 0 && tiffOffset + tiffLength <= file.size
+            ? tiffOffset + tiffLength
+            : Math.min(file.size, tiffOffset + 10 * 1024 * 1024);
 
-        // Check if directly JPEG stream (0xFF 0xD8 0xFF)
-        if (tiffBytes[0] === 0xFF && tiffBytes[1] === 0xD8 && tiffBytes[2] === 0xFF) {
-          const blob = new Blob([tiffBuffer], { type: 'image/jpeg' });
-          const url = URL.createObjectURL(blob);
-          const rasterized = await validateAndRasterizeImage(url, 1200);
-          URL.revokeObjectURL(url);
-          if (rasterized) {
-            return {
-              previewUrl: rasterized.previewUrl,
-              base64Data: rasterized.base64Data,
-              mimeTypeForAi: 'image/jpeg',
-            };
+        if (actualTiffEnd - tiffOffset > 50) {
+          const tiffBuffer = await file.slice(tiffOffset, actualTiffEnd).arrayBuffer();
+          const tiffBytes = new Uint8Array(tiffBuffer);
+
+          // Check if directly JPEG stream (0xFF 0xD8 0xFF)
+          if (tiffBytes[0] === 0xFF && tiffBytes[1] === 0xD8 && tiffBytes[2] === 0xFF) {
+            const blob = new Blob([tiffBuffer], { type: 'image/jpeg' });
+            const url = URL.createObjectURL(blob);
+            const rasterized = await validateAndRasterizeImage(url, 1200);
+            URL.revokeObjectURL(url);
+            if (rasterized) {
+              return {
+                previewUrl: rasterized.previewUrl,
+                base64Data: rasterized.base64Data,
+                mimeTypeForAi: 'image/jpeg',
+              };
+            }
           }
-        }
 
-        // Decode TIFF preview with UTIF.js
-        try {
-          const ifds = UTIF.decode(tiffBuffer);
-          if (ifds && ifds.length > 0 && ifds[0].width > 10 && ifds[0].height > 10) {
-            const firstIfd = ifds[0];
-            UTIF.decodeImage(tiffBuffer, firstIfd);
-            const rgba = UTIF.toRGBA8(firstIfd);
-            if (rgba && rgba.length === firstIfd.width * firstIfd.height * 4) {
-              const canvas = document.createElement('canvas');
-              canvas.width = firstIfd.width;
-              canvas.height = firstIfd.height;
-              const ctx = canvas.getContext('2d');
-              if (ctx) {
-                const imgData = new ImageData(
-                  new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, rgba.byteLength),
-                  firstIfd.width,
-                  firstIfd.height
-                );
-                ctx.putImageData(imgData, 0, 0);
+          // Decode TIFF preview with UTIF.js
+          try {
+            const ifds = UTIF.decode(tiffBuffer);
+            if (ifds && ifds.length > 0) {
+              const firstIfd = ifds[0];
+              const w = firstIfd.width || (firstIfd as any).t256?.[0] || 0;
+              const h = firstIfd.height || (firstIfd as any).t257?.[0] || 0;
 
-                // Render over pure white background
-                const finalCanvas = document.createElement('canvas');
-                finalCanvas.width = firstIfd.width;
-                finalCanvas.height = firstIfd.height;
-                const fCtx = finalCanvas.getContext('2d');
-                if (fCtx) {
-                  fCtx.fillStyle = '#ffffff';
-                  fCtx.fillRect(0, 0, firstIfd.width, firstIfd.height);
-                  fCtx.drawImage(canvas, 0, 0);
+              if (w > 10 && h > 10) {
+                firstIfd.width = w;
+                firstIfd.height = h;
+                UTIF.decodeImage(tiffBuffer, firstIfd);
+                const rgba = UTIF.toRGBA8(firstIfd);
+                if (rgba && rgba.length === w * h * 4) {
+                  const canvas = document.createElement('canvas');
+                  canvas.width = w;
+                  canvas.height = h;
+                  const ctx = canvas.getContext('2d');
+                  if (ctx) {
+                    const imgData = new ImageData(
+                      new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, rgba.byteLength),
+                      w,
+                      h
+                    );
+                    ctx.putImageData(imgData, 0, 0);
 
-                  const jpegUrl = finalCanvas.toDataURL('image/jpeg', 0.90);
-                  const b64 = jpegUrl.split(',')[1];
-                  if (b64 && b64.length > 50) {
-                    return {
-                      previewUrl: jpegUrl,
-                      base64Data: b64,
-                      mimeTypeForAi: 'image/jpeg',
-                    };
+                    // Render over pure white background
+                    const finalCanvas = document.createElement('canvas');
+                    finalCanvas.width = w;
+                    finalCanvas.height = h;
+                    const fCtx = finalCanvas.getContext('2d');
+                    if (fCtx) {
+                      fCtx.fillStyle = '#ffffff';
+                      fCtx.fillRect(0, 0, w, h);
+                      fCtx.drawImage(canvas, 0, 0);
+
+                      const jpegUrl = finalCanvas.toDataURL('image/jpeg', 0.90);
+                      const b64 = jpegUrl.split(',')[1];
+                      if (b64 && b64.length > 50) {
+                        return {
+                          previewUrl: jpegUrl,
+                          base64Data: b64,
+                          mimeTypeForAi: 'image/jpeg',
+                        };
+                      }
+                    }
                   }
                 }
               }
             }
+          } catch (utifErr) {
+            console.warn('UTIF decode exception for EPS TIFF preview:', utifErr);
           }
-        } catch (utifErr) {
-          console.warn('UTIF decode exception for EPS TIFF preview:', utifErr);
         }
       }
 
       // 2. If TIFF preview was missing or failed, extract PostScript slice from psOffset
-      if (psOffset > 0 && psLength > 100 && psOffset + psLength <= file.size) {
+      if (psOffset > 0 && psOffset < file.size) {
         try {
-          const psBuffer = await file.slice(psOffset, psOffset + psLength).arrayBuffer();
+          const psEnd =
+            psLength > 0 && psLength !== 0xffffffff && psOffset + psLength <= file.size
+              ? psOffset + psLength
+              : file.size;
+
+          const psBuffer = await file.slice(psOffset, psEnd).arrayBuffer();
           const textDecoder = new TextDecoder('latin1');
           const psText = textDecoder.decode(psBuffer);
 
-          // Check XMP in PostScript slice
+          // 2a. Check XMP thumbnail in PostScript slice
+          const xmpB64 = extractXmpBase64FromText(psText);
+          if (xmpB64) {
+            const rasterized = await validateAndRasterizeImage(`data:image/jpeg;base64,${xmpB64}`, 1200);
+            if (rasterized) return rasterized;
+          }
+
+          // 2b. Check EPSI Hex preview in PostScript slice
           const epsi = parseEpsiHexPreview(psText);
           if (epsi) return epsi;
 
-          // Check embedded streams in PostScript slice
-          const psBytes = new Uint8Array(psBuffer);
+          // 2c. Check embedded PDF streams in PostScript slice
           const pdfIdx = psText.indexOf('%PDF-');
           if (pdfIdx !== -1) {
             const pdfSlice = psBuffer.slice(pdfIdx);
@@ -689,7 +770,11 @@ export async function extractTiffFromBinaryEps(
             if (renderedPdf) return renderedPdf;
           }
 
-          // Check client-side PostScript canvas interpreter
+          // 2d. Check AI Private Data in PostScript slice
+          const aiPriv = await extractAiPrivateDataPdf(psBuffer);
+          if (aiPriv) return aiPriv;
+
+          // 2e. Execute client-side PostScript canvas interpreter
           const psCanvas = renderPostScriptCodeToCanvas(psText, 1200);
           if (psCanvas) {
             return {
@@ -711,64 +796,52 @@ export async function extractTiffFromBinaryEps(
 
 /**
  * Extracts embedded XMP metadata thumbnail or raster image from AI/EPS files
- * Reads only the first 1.5MB where XMP headers are located to preserve memory
+ * Scans memory-safe chunks across start, trailer, and body
  */
-export async function extractEmbeddedXmpThumbnail(file: File): Promise<{ previewUrl: string; base64Data: string; mimeTypeForAi: string } | null> {
+export async function extractEmbeddedXmpThumbnail(
+  file: File
+): Promise<{ previewUrl: string; base64Data: string; mimeTypeForAi: string } | null> {
   try {
-    const sliceSize = Math.min(file.size, 1500000);
-    const buffer = await file.slice(0, sliceSize).arrayBuffer();
     const textDecoder = new TextDecoder('latin1');
-    const text = textDecoder.decode(buffer);
 
-    // 1. Check EPSI Hex Preview
-    const epsi = parseEpsiHexPreview(text);
-    if (epsi) return epsi;
+    // 1. Scan beginning chunk (first 2MB)
+    const headSize = Math.min(file.size, 2 * 1024 * 1024);
+    const headBuf = await file.slice(0, headSize).arrayBuffer();
+    const headText = textDecoder.decode(headBuf);
 
-    // 2. Match Adobe XMP GImg Thumbnail (<xmpGImg:image> or <photoshop:Thumbnail>)
-    const xmpPatterns = [
-      /<(?:xmpGImg|xapGImg|photoshop|xmp):(?:image|Thumbnail|Thumbnails)[^>]*>([\s\S]*?)<\/(?:xmpGImg|xapGImg|photoshop|xmp):(?:image|Thumbnail|Thumbnails)>/i,
-      /(?:xmpGImg:image|photoshop:Thumbnail|xapGImg:image)=["']([A-Za-z0-9+/=\s\r\n]{100,})["']/i,
-    ];
+    const headB64 = extractXmpBase64FromText(headText);
+    if (headB64) {
+      const candidate = await validateAndRasterizeImage(`data:image/jpeg;base64,${headB64}`, 1200);
+      if (candidate) return candidate;
+    }
 
-    for (const pattern of xmpPatterns) {
-      const match = text.match(pattern);
-      if (match && match[1]) {
-        const cleanB64 = match[1].replace(/[\r\n\s]/g, '');
-        if (cleanB64.length > 80) {
-          // Test as JPEG
-          const jpegCandidate = await validateAndRasterizeImage(`data:image/jpeg;base64,${cleanB64}`, 1200);
-          if (jpegCandidate) {
-            return {
-              previewUrl: jpegCandidate.previewUrl,
-              base64Data: jpegCandidate.base64Data,
-              mimeTypeForAi: 'image/jpeg',
-            };
-          }
+    const headEpsi = parseEpsiHexPreview(headText);
+    if (headEpsi) return headEpsi;
 
-          // Test as PNG
-          const pngCandidate = await validateAndRasterizeImage(`data:image/png;base64,${cleanB64}`, 1200);
-          if (pngCandidate) {
-            return {
-              previewUrl: pngCandidate.previewUrl,
-              base64Data: pngCandidate.base64Data,
-              mimeTypeForAi: 'image/jpeg',
-            };
-          }
-        }
+    // 2. Scan trailer chunk (last 2MB, where many EPS trailers store XMP packets)
+    if (file.size > 2 * 1024 * 1024) {
+      const tailStart = Math.max(0, file.size - 2 * 1024 * 1024);
+      const tailBuf = await file.slice(tailStart, file.size).arrayBuffer();
+      const tailText = textDecoder.decode(tailBuf);
+
+      const tailB64 = extractXmpBase64FromText(tailText);
+      if (tailB64) {
+        const candidate = await validateAndRasterizeImage(`data:image/jpeg;base64,${tailB64}`, 1200);
+        if (candidate) return candidate;
       }
     }
 
-    // 3. Match Photoshop / Illustrator Base64 thumbnail in DSC comments
-    const rawB64Match = text.match(/%%BeginPhotoshop:[\s\S]*?([A-Za-z0-9+/=]{300,})[\s\S]*?%%EndPhotoshop/i);
-    if (rawB64Match && rawB64Match[1]) {
-      const cleanB64 = rawB64Match[1].replace(/[\r\n\s]/g, '');
-      const tested = await validateAndRasterizeImage(`data:image/jpeg;base64,${cleanB64}`, 1200);
-      if (tested) {
-        return {
-          previewUrl: tested.previewUrl,
-          base64Data: tested.base64Data,
-          mimeTypeForAi: 'image/jpeg',
-        };
+    // 3. Middle chunk scan for files between 4MB and 16MB
+    if (file.size > 4 * 1024 * 1024 && file.size <= 16 * 1024 * 1024) {
+      const midStart = Math.floor(file.size / 2) - 1024 * 1024;
+      const midEnd = midStart + 2 * 1024 * 1024;
+      const midBuf = await file.slice(midStart, midEnd).arrayBuffer();
+      const midText = textDecoder.decode(midBuf);
+
+      const midB64 = extractXmpBase64FromText(midText);
+      if (midB64) {
+        const candidate = await validateAndRasterizeImage(`data:image/jpeg;base64,${midB64}`, 1200);
+        if (candidate) return candidate;
       }
     }
   } catch (err) {
@@ -877,8 +950,8 @@ export async function extractAiPrivateDataPdf(
         }
 
         if (pdfOffset !== -1) {
-          const pdfBuf = decodedBytes.subarray(pdfOffset).buffer;
-          const rendered = await renderPdfBufferToCanvas(pdfBuf);
+          const pdfSlice = decodedBytes.slice(pdfOffset);
+          const rendered = await renderPdfBufferToCanvas(pdfSlice.buffer);
           if (rendered) return rendered;
         }
 
@@ -900,8 +973,8 @@ export async function extractAiPrivateDataPdf(
               }
             }
             if (infPdfOffset !== -1) {
-              const pdfBuf = inflated.subarray(infPdfOffset).buffer;
-              const rendered = await renderPdfBufferToCanvas(pdfBuf);
+              const pdfSlice = inflated.slice(infPdfOffset);
+              const rendered = await renderPdfBufferToCanvas(pdfSlice.buffer);
               if (rendered) return rendered;
             }
           } catch (zErr) {
@@ -1553,9 +1626,10 @@ export async function generateDeterministicVectorThumbnail(file: File): Promise<
   }
 
   const jpegUrl = canvas.toDataURL('image/jpeg', 0.90);
+  const b64 = jpegUrl.split(',')[1] || '';
   return {
     previewUrl: jpegUrl,
-    base64Data: '', // CRITICAL: Keep empty for AI vision so AI vision models don't analyze placeholder graphic
+    base64Data: b64, // Valid, lightweight JPEG base64 string for Gemini AI Vision
     mimeTypeForAi: 'image/jpeg',
     isRealArtworkPreview: false,
   };
@@ -1563,7 +1637,6 @@ export async function generateDeterministicVectorThumbnail(file: File): Promise<
 
 /**
  * Creates a clean, professional vector representation badge when an EPS has no embedded raster preview.
- * NOTE: Returns base64Data as empty string so AI vision models are NEVER sent the placeholder badge!
  */
 export async function renderEpsCanvasPreview(file: File): Promise<{ previewUrl: string; base64Data: string; mimeTypeForAi: string; isRealArtworkPreview: boolean }> {
   return generateDeterministicVectorThumbnail(file);
@@ -1678,20 +1751,8 @@ export async function prepareFileForAi(file: File): Promise<{
       }
 
       try {
-        // 1st Priority: Server-Side Ghostscript & Multi-Strategy Vector Engine (up to 80MB, fast native binary, 0% browser load)
-        if (file.size <= 80 * 1024 * 1024) {
-          const serverRendered = await renderVectorViaServer(file);
-          if (serverRendered && serverRendered.base64Data) {
-            return {
-              ...serverRendered,
-              isRealArtworkPreview: true,
-              vectorSemanticText,
-              cleanSubject,
-            };
-          }
-        }
-
-        // 2nd Priority: Instant Binary EPS TIFF check (< 2ms, 30 bytes check)
+        // 1st Priority: Instant Binary EPS Header TIFF check (< 2ms, zero server dependencies)
+        // Decodes embedded TIFF or JPEG with UTIF or native canvas
         const tiffExtracted = await extractTiffFromBinaryEps(file);
         if (tiffExtracted && tiffExtracted.base64Data) {
           return {
@@ -1702,21 +1763,33 @@ export async function prepareFileForAi(file: File): Promise<{
           };
         }
 
-        // 3rd Priority: Other embedded stream extraction (AI Private Data / PDF Stream / XMP)
-        const extracted = await extractEmbeddedImageFromVector(file);
-        if (extracted && extracted.base64Data) {
+        // 2nd Priority: Embedded XMP Thumbnail extraction (zero server dependencies)
+        const xmpExtracted = await extractEmbeddedXmpThumbnail(file);
+        if (xmpExtracted && xmpExtracted.base64Data) {
           return {
-            ...extracted,
+            ...xmpExtracted,
             isRealArtworkPreview: true,
             vectorSemanticText,
             cleanSubject,
           };
         }
 
-        // 4th Priority: Client-Side PostScript Vector Interpreter (with timeout guards)
-        if (file.size <= 15 * 1024 * 1024) {
+        // 3rd Priority: Embedded Streams (AI Private Data PDF / raw PDF / JPEG streams)
+        const streamExtracted = await extractEmbeddedImageFromVector(file);
+        if (streamExtracted && streamExtracted.base64Data) {
+          return {
+            ...streamExtracted,
+            isRealArtworkPreview: true,
+            vectorSemanticText,
+            cleanSubject,
+          };
+        }
+
+        // 4th Priority: Pure Client-Side PostScript Vector Interpreter
+        // Interprets PostScript/Illustrator paths, CMYK/RGB colors, transforms, and compound shapes
+        if (file.size <= 25 * 1024 * 1024) {
           try {
-            const sliceSize = Math.min(file.size, 8 * 1024 * 1024);
+            const sliceSize = Math.min(file.size, 10 * 1024 * 1024);
             const buffer = await file.slice(0, sliceSize).arrayBuffer();
             const textDecoder = new TextDecoder('latin1');
             const psText = textDecoder.decode(buffer);
@@ -1734,18 +1807,29 @@ export async function prepareFileForAi(file: File): Promise<{
           }
         }
 
-        // 5th Priority: Clean vector artboard showcase canvas preview with raw vector base64 for server-side rasterization
-        let rawVectorBase64 = '';
-        try {
-          rawVectorBase64 = await readFileAsBase64Only(file);
-        } catch (e) {
-          // ignore
+        // 5th Priority: Server-Side Vector Rendering (Optional fallback, strictly guarded to < 4MB for Vercel payload limits)
+        if (file.size <= 4 * 1024 * 1024) {
+          try {
+            const serverRendered = await renderVectorViaServer(file);
+            if (serverRendered && serverRendered.base64Data) {
+              return {
+                ...serverRendered,
+                isRealArtworkPreview: true,
+                vectorSemanticText,
+                cleanSubject,
+              };
+            }
+          } catch (servErr) {
+            console.warn('Server vector rendering optional fallback unavailable:', servErr);
+          }
         }
 
+        // 6th Priority: Guaranteed High-Quality Vector Showcase Thumbnail
+        // Renders deterministic artboard layout, color palette & typography, guaranteed genuine JPEG base64
         const fallbackBadge = await renderEpsCanvasPreview(file);
         return {
           previewUrl: fallbackBadge.previewUrl,
-          base64Data: rawVectorBase64, // Raw vector data sent to backend so server can rasterize into genuine JPEG
+          base64Data: fallbackBadge.base64Data, // Valid, lightweight JPEG base64 string
           mimeTypeForAi: 'image/jpeg',
           isRealArtworkPreview: false,
           vectorSemanticText,

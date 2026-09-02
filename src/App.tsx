@@ -163,25 +163,22 @@ export default function App() {
           );
         }
 
-        if (!base64Data && file.formatCategory !== 'vector') {
-          throw new Error('Could not read image base64 data for AI processing.');
+        // If vector base64Data is missing or not a valid raster format, ensure lightweight JPEG base64
+        if (file.formatCategory === 'vector' && file.file) {
+          if (!base64Data || (!base64Data.startsWith('/9j/') && !base64Data.startsWith('iVBOR') && !base64Data.startsWith('R0lGOD') && !base64Data.startsWith('UklGR'))) {
+            try {
+              const fallback = await generateDeterministicVectorThumbnail(file.file);
+              base64Data = fallback.base64Data;
+              previewUrl = previewUrl || fallback.previewUrl;
+              mimeTypeForAi = 'image/jpeg';
+            } catch (e) {
+              console.warn('Fallback thumbnail generation error:', e);
+            }
+          }
         }
 
-        // If vector base64Data is missing, read raw file base64 so server can rasterize it on-the-fly
-        if (!base64Data && file.formatCategory === 'vector' && file.file) {
-          try {
-            base64Data = await new Promise<string>((resolve) => {
-              const reader = new FileReader();
-              reader.onload = () => {
-                const res = reader.result as string;
-                resolve(res.includes(',') ? res.split(',')[1] : res);
-              };
-              reader.onerror = () => resolve('');
-              reader.readAsDataURL(file.file!);
-            });
-          } catch (e) {
-            // Continue
-          }
+        if (!base64Data && file.formatCategory !== 'vector') {
+          throw new Error('Could not read image base64 data for AI processing.');
         }
 
         const creds = getActiveAiCredentials();

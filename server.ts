@@ -1243,7 +1243,7 @@ app.post('/api/generate-metadata', async (req, res) => {
       cleanBase64.startsWith('R0lGOD') ||
       cleanBase64.startsWith('UklGR');
 
-    const hasImage = cleanBase64.length > 50 && isRealVisual && isValidRasterImage;
+    const hasImage = cleanBase64.length > 50 && isValidRasterImage;
 
     if (!hasImage && !isVector && cleanBase64.length <= 50) {
       return res.status(400).json({

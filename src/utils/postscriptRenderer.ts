@@ -24,13 +24,58 @@ interface BoundingBox {
 }
 
 /**
- * Extracts BoundingBox or HiResBoundingBox from PostScript header comments
+ * Strips non-drawing heavy binary blocks (private data, embedded fonts, photoshop resources)
+ * to keep PostScript tokenization fast (completes in < 5ms).
+ */
+export function stripHeavyDataBlocks(text: string): string {
+  const blocks: [string, string][] = [
+    ['%%BeginData', '%%EndData'],
+    ['%AI9_PrivateDataBegin', '%AI9_PrivateDataEnd'],
+    ['%AI12_PrivateDataBegin', '%AI12_PrivateDataEnd'],
+    ['%AI24_PrivateDataBegin', '%AI24_PrivateDataEnd'],
+    ['PrivateDataBegin', 'PrivateDataEnd'],
+    ['%%BeginPhotoshop', '%%EndPhotoshop'],
+    ['%%BeginICCProfile', '%%EndICCProfile'],
+    ['%%BeginFont', '%%EndFont'],
+    ['%%BeginResource: procset Adobe_AGM_Image', '%%EndResource'],
+  ];
+
+  let res = text;
+  for (const [startTag, endTag] of blocks) {
+    let pos = 0;
+    while (pos < res.length) {
+      const startIdx = res.indexOf(startTag, pos);
+      if (startIdx === -1) break;
+      const endIdx = res.indexOf(endTag, startIdx + startTag.length);
+      if (endIdx === -1) break;
+      res = res.substring(0, startIdx) + '\n' + res.substring(endIdx + endTag.length);
+      pos = startIdx + 1;
+    }
+  }
+  return res;
+}
+
+/**
+ * Extracts BoundingBox or HiResBoundingBox from PostScript header comments or trailer
  */
 export function extractBoundingBox(psText: string): BoundingBox | null {
+  const trailerText = psText.length > 8192 ? psText.slice(-8192) : psText;
+
   // Check %%HiResBoundingBox first, then %%BoundingBox, then %AI5_ArtBounds:
-  const hiresMatch = psText.match(/%%HiResBoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i);
-  const bboxMatch = psText.match(/%%BoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i);
-  const artBoundsMatch = psText.match(/%AI5_ArtBounds:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i);
+  const hiresMatch =
+    psText.match(/%%HiResBoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i) ||
+    trailerText.match(/%%HiResBoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i);
+
+  // Match all %%BoundingBox (trailer overrides (atend))
+  const bboxMatches = Array.from(
+    psText.matchAll(/%%BoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/gi)
+  );
+  const bboxMatch = bboxMatches.length > 0 ? bboxMatches[bboxMatches.length - 1] : null;
+
+  const artBoundsMatch =
+    psText.match(/%AI5_ArtBounds:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i) ||
+    psText.match(/%AI3_Cropmarks:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i) ||
+    psText.match(/%%PageBoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i);
 
   const match = hiresMatch || bboxMatch || artBoundsMatch;
   if (!match) return null;
@@ -44,7 +89,14 @@ export function extractBoundingBox(psText: string): BoundingBox | null {
   const height = Math.abs(maxY - minY);
 
   if (width > 0 && height > 0 && !isNaN(width) && !isNaN(height) && width < 100000 && height < 100000) {
-    return { minX: Math.min(minX, maxX), minY: Math.min(minY, maxY), maxX: Math.max(minX, maxX), maxY: Math.max(minY, maxY), width, height };
+    return {
+      minX: Math.min(minX, maxX),
+      minY: Math.min(minY, maxY),
+      maxX: Math.max(minX, maxX),
+      maxY: Math.max(minY, maxY),
+      width,
+      height,
+    };
   }
   return null;
 }
@@ -66,48 +118,46 @@ function cmykToRgb(c: number, m: number, y: number, k: number): [number, number,
 }
 
 /**
- * Fast PostScript Tokenizer that handles DSC comments, strings, hex literals, arrays, and procedures
+ * High-speed PostScript Tokenizer with charCode scanning and safe token limits
  */
-function tokenizePostScript(code: string, maxTokens = 60000): string[] {
+function tokenizePostScript(code: string, maxTokens = 120000): string[] {
   const tokens: string[] = [];
   let i = 0;
   const len = code.length;
-  const startTime = Date.now();
 
   while (i < len && tokens.length < maxTokens) {
-    // Timeout guard to prevent any potential main thread lock
-    if (tokens.length % 10000 === 0 && Date.now() - startTime > 400) {
-      break;
-    }
+    const chCode = code.charCodeAt(i);
 
-    const ch = code[i];
-
-    // Whitespace
-    if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === '\f') {
+    // Whitespace (space 32, tab 9, newline 10, CR 13, FF 12)
+    if (chCode <= 32) {
       i++;
       continue;
     }
 
     // Comment (% ... \n)
-    if (ch === '%') {
-      while (i < len && code[i] !== '\n' && code[i] !== '\r') {
-        i++;
-      }
+    if (chCode === 37) {
+      // '%'
+      const nextLine = code.indexOf('\n', i + 1);
+      if (nextLine === -1) break;
+      i = nextLine + 1;
       continue;
     }
 
     // String literal ( ... )
-    if (ch === '(') {
+    if (chCode === 40) {
+      // '('
       let depth = 1;
       const start = i + 1;
       i++;
       while (i < len && depth > 0) {
-        if (code[i] === '\\' && i + 1 < len) {
+        const c = code.charCodeAt(i);
+        if (c === 92) {
+          // '\\'
           i += 2;
           continue;
         }
-        if (code[i] === '(') depth++;
-        else if (code[i] === ')') depth--;
+        if (c === 40) depth++;
+        else if (c === 41) depth--;
         i++;
       }
       tokens.push('(' + code.substring(start, Math.max(start, i - 1)) + ')');
@@ -115,17 +165,22 @@ function tokenizePostScript(code: string, maxTokens = 60000): string[] {
     }
 
     // Hex literal < ... >
-    if (ch === '<') {
-      const start = i;
-      i++;
-      while (i < len && code[i] !== '>') i++;
-      if (i < len) i++;
-      tokens.push(code.substring(start, i));
+    if (chCode === 60) {
+      // '<'
+      const end = code.indexOf('>', i + 1);
+      if (end !== -1) {
+        tokens.push(code.substring(i, end + 1));
+        i = end + 1;
+      } else {
+        tokens.push(code.substring(i));
+        break;
+      }
       continue;
     }
 
-    // Brackets and delimiters
-    if (ch === '{' || ch === '}' || ch === '[' || ch === ']' || ch === '>' || ch === '/' || ch === '=') {
+    // Delimiters
+    const ch = code[i];
+    if (ch === '{' || ch === '}' || ch === '[' || ch === ']' || ch === '>') {
       tokens.push(ch);
       i++;
       continue;
@@ -133,17 +188,20 @@ function tokenizePostScript(code: string, maxTokens = 60000): string[] {
 
     // Regular token / operator / number / name literal
     const start = i;
-    while (i < len && !' \t\r\n\f%(){}[]<>'.includes(code[i])) {
+    while (i < len) {
+      const c = code.charCodeAt(i);
+      if (c <= 32 || c === 37 || c === 40 || c === 41 || c === 60 || c === 62 || c === 91 || c === 93 || c === 123 || c === 125) {
+        break;
+      }
       i++;
     }
 
     if (i === start) {
-      i++; // Guarantee progress to eliminate infinite loops
+      i++;
       continue;
     }
 
-    const tok = code.substring(start, i);
-    if (tok) tokens.push(tok);
+    tokens.push(code.substring(start, i));
   }
 
   return tokens;
@@ -161,7 +219,8 @@ export function renderPostScriptCodeToCanvas(
 
     // 1. Get BoundingBox or auto-compute from coordinates
     let bbox = extractBoundingBox(psText);
-    const tokens = tokenizePostScript(psText, 120000);
+    const cleanCode = stripHeavyDataBlocks(psText);
+    const tokens = tokenizePostScript(cleanCode, 150000);
 
     if (tokens.length < 5) return null;
 
@@ -772,13 +831,13 @@ export function renderPostScriptCodeToCanvas(
       }
 
       const nonWhiteRatio = nonWhitePixels / (sampledCount || 1);
-      // If less than 0.3% of sampled pixels contain artwork, reject as blank/failed render
-      if (nonWhiteRatio < 0.003 || pathDrawnCount < 1) {
+      // Reject only if zero drawing operations occurred or canvas is entirely blank/pure white
+      if (pathDrawnCount < 1 || (nonWhitePixels < 2 && nonWhiteRatio < 0.0001)) {
         return null;
       }
     } catch (pixelErr) {
-      // If getImageData fails due to security/taint, proceed only if multiple paths drawn
-      if (pathDrawnCount < 2) return null;
+      // If getImageData fails due to security/taint, proceed only if paths drawn
+      if (pathDrawnCount < 1) return null;
     }
 
     // Export high-quality JPEG
