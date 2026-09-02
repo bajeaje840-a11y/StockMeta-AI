@@ -205,7 +205,21 @@ export const EditDrawer: React.FC<EditDrawerProps> = ({
           {/* Media Preview Stage */}
           <div className="w-full h-48 rounded-xl bg-zinc-100 dark:bg-zinc-950 border border-zinc-200 dark:border-white/[0.06] overflow-hidden flex items-center justify-center relative shadow-inner">
             {file.previewUrl ? (
-              <img src={file.previewUrl} alt={file.name} className="w-full h-full object-contain p-2" />
+              <img
+                src={file.previewUrl}
+                alt={file.name}
+                className="w-full h-full object-contain p-2"
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).style.display = 'none';
+                  const parent = (e.currentTarget as HTMLImageElement).parentElement;
+                  if (parent && !parent.querySelector('.fallback-icon')) {
+                    const icon = document.createElement('div');
+                    icon.className = 'fallback-icon flex items-center justify-center w-full h-full text-zinc-400';
+                    icon.innerHTML = `<svg class="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>`;
+                    parent.appendChild(icon);
+                  }
+                }}
+              />
             ) : (
               <FileImage className="w-8 h-8 text-zinc-400" />
             )}

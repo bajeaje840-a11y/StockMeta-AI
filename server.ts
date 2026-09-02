@@ -43,8 +43,9 @@ const currentDir = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
 
 const app = express();
 
-// Increase payload limit for base64 image uploads
-app.use(express.json({ limit: '50mb' }));
+// Increase payload limit for base64 vector uploads and high-res images
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
 /**
  * Multi-API Key Pool & Round-Robin Rotation Manager for Gemini
@@ -936,105 +937,173 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
       } catch (e) {}
     }
 
-    // Fix %%BoundingBox: (atend) and inject Adobe Illustrator compatibility prolog
-    let psString = cleanPsBuffer.toString('latin1');
-    if (psString.includes('%%BoundingBox: (atend)') || psString.includes('%%BoundingBox:(atend)')) {
-      const bboxMatches = Array.from(psString.matchAll(/%%(?:HiRes)?BoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/gi));
-      let validBBox: string | null = null;
-      for (const m of bboxMatches) {
-        const x1 = parseFloat(m[1]);
-        const y1 = parseFloat(m[2]);
-        const x2 = parseFloat(m[3]);
-        const y2 = parseFloat(m[4]);
-        if (!isNaN(x1) && !isNaN(y1) && !isNaN(x2) && !isNaN(y2) && (x2 > x1 || y2 > y1)) {
-          validBBox = `%%BoundingBox: ${Math.round(x1)} ${Math.round(y1)} ${Math.round(x2)} ${Math.round(y2)}`;
-          break;
+    // Strategy 6: DIRECT GHOSTSCRIPT ON CLEAN, UNMODIFIED POSTSCRIPT (High Priority)
+    // First, write the pristine clean PostScript file without any modified/injected prologs
+    const rawPsPath = path.join(tmpDir, `clean_${randId}${ext}`);
+    fs.writeFileSync(rawPsPath, cleanPsBuffer);
+
+    try {
+      // 6a: Ghostscript with -dEPSCrop (best fidelity for standard EPS BoundingBox)
+      try {
+        execSync(
+          `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -dEPSCrop -sDEVICE=jpeg -dJPEGQ=95 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${rawPsPath}"`,
+          { timeout: 15000, stdio: 'pipe' }
+        );
+        if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+          console.log(`[renderVectorBufferToJpeg] Clean PostScript GS -dEPSCrop success! Out size: ${fs.statSync(outPath).size}`);
+          return fs.readFileSync(outPath);
+        }
+      } catch (e: any) {}
+
+      // 6b: Ghostscript with Fixed Media & Auto-Fit (essential if BoundingBox is missing, invalid, or zero-sized)
+      try {
+        execSync(
+          `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=95 -r150 -dDEVICEWIDTHPOINTS=1024 -dDEVICEHEIGHTPOINTS=1024 -dFIXEDMEDIA -dPDFFitPage -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${rawPsPath}"`,
+          { timeout: 15000, stdio: 'pipe' }
+        );
+        if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+          console.log(`[renderVectorBufferToJpeg] Clean PostScript GS FIXEDMEDIA success! Out size: ${fs.statSync(outPath).size}`);
+          return fs.readFileSync(outPath);
+        }
+      } catch (e: any) {}
+
+      // 6c: ps2pdf conversion then Ghostscript PDF render (resilient to PostScript syntax nuances)
+      const pdfFromPsPath = path.join(tmpDir, `ps2pdf_${randId}.pdf`);
+      try {
+        execSync(`ps2pdf "${rawPsPath}" "${pdfFromPsPath}"`, { timeout: 15000, stdio: 'pipe' });
+        if (fs.existsSync(pdfFromPsPath) && fs.statSync(pdfFromPsPath).size > 200) {
+          try {
+            execSync(
+              `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=95 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -dFirstPage=1 -dLastPage=1 -sOutputFile="${outPath}" "${pdfFromPsPath}"`,
+              { timeout: 15000, stdio: 'pipe' }
+            );
+          } catch {
+            execSync(`convert -density 150 "${pdfFromPsPath}[0]" -background white -flatten "${outPath}"`, { timeout: 15000, stdio: 'pipe' });
+          }
+          if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+            console.log(`[renderVectorBufferToJpeg] ps2pdf conversion success! Out size: ${fs.statSync(outPath).size}`);
+            return fs.readFileSync(outPath);
+          }
+        }
+      } catch (e: any) {} finally {
+        if (fs.existsSync(pdfFromPsPath)) {
+          try { fs.unlinkSync(pdfFromPsPath); } catch {}
         }
       }
-      if (validBBox) {
-        psString = psString.replace(/%%BoundingBox:\s*\(atend\)/gi, validBBox);
+
+      // 6d: ImageMagick Convert directly on clean EPS
+      try {
+        execSync(`convert -density 150 "${rawPsPath}[0]" -background white -flatten "${outPath}"`, { timeout: 15000, stdio: 'pipe' });
+        if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+          console.log(`[renderVectorBufferToJpeg] Clean PostScript ImageMagick success! Out size: ${fs.statSync(outPath).size}`);
+          return fs.readFileSync(outPath);
+        }
+      } catch (e: any) {}
+
+      // 6e: ImageMagick with sRGB colorspace
+      try {
+        execSync(`convert -colorspace sRGB -density 150 "${rawPsPath}" -background white -flatten "${outPath}"`, { timeout: 15000, stdio: 'pipe' });
+        if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+          console.log(`[renderVectorBufferToJpeg] Clean PostScript ImageMagick sRGB success! Out size: ${fs.statSync(outPath).size}`);
+          return fs.readFileSync(outPath);
+        }
+      } catch (e: any) {}
+    } finally {
+      if (fs.existsSync(rawPsPath)) {
+        try { fs.unlinkSync(rawPsPath); } catch {}
       }
     }
 
-    // Inject full Adobe Illustrator compatibility prolog after the first PostScript header line
-    let psWithProlog = psString;
-    const psIndex = psString.indexOf('%!PS');
-    if (psIndex !== -1) {
-      let lineEnd = psString.indexOf('\n', psIndex);
-      if (lineEnd === -1) lineEnd = psIndex + 4;
-      else lineEnd = lineEnd + 1;
-      psWithProlog = psString.slice(0, lineEnd) + '\n' + ADOBE_AI_COMPATIBILITY_PROLOG + '\n' + psString.slice(lineEnd);
-    } else {
-      psWithProlog = '%!PS-Adobe-3.0 EPSF-3.0\n' + ADOBE_AI_COMPATIBILITY_PROLOG + '\n' + psString;
-    }
-
-    const psPath = path.join(tmpDir, `clean_${randId}${ext}`);
-    fs.writeFileSync(psPath, Buffer.from(psWithProlog, 'latin1'));
-
-    // Strategy 6: Ghostscript directly on clean EPS PostScript file (with EPSCrop & SAFER)
+    // Strategy 7: Fallback with BoundingBox Repair & Compatibility Prolog (ONLY when direct rendering failed)
     try {
-      execSync(
-        `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -dEPSCrop -sDEVICE=jpeg -dJPEGQ=95 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${psPath}"`,
-        { timeout: 15000, stdio: 'pipe' }
-      );
-      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
-        console.log(`[renderVectorBufferToJpeg] Strategy 6 success! Out size: ${fs.statSync(outPath).size}`);
-        return fs.readFileSync(outPath);
+      let psString = cleanPsBuffer.toString('latin1');
+      if (psString.includes('%%BoundingBox: (atend)') || psString.includes('%%BoundingBox:(atend)')) {
+        const bboxMatches = Array.from(psString.matchAll(/%%(?:HiRes)?BoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/gi));
+        let validBBox: string | null = null;
+        for (const m of bboxMatches) {
+          const x1 = parseFloat(m[1]);
+          const y1 = parseFloat(m[2]);
+          const x2 = parseFloat(m[3]);
+          const y2 = parseFloat(m[4]);
+          if (!isNaN(x1) && !isNaN(y1) && !isNaN(x2) && !isNaN(y2) && (x2 > x1 || y2 > y1)) {
+            validBBox = `%%BoundingBox: ${Math.round(x1)} ${Math.round(y1)} ${Math.round(x2)} ${Math.round(y2)}`;
+            break;
+          }
+        }
+        if (validBBox) {
+          psString = psString.replace(/%%BoundingBox:\s*\(atend\)/gi, validBBox);
+        }
       }
-    } catch (e: any) {
-      console.log(`[renderVectorBufferToJpeg] Strategy 6 failed: ${e.message}`);
-    }
 
-    // Strategy 7: Ghostscript with -dNOSAFER (allows full PostScript Level 2 custom operator dictionary executions)
-    try {
-      execSync(
-        `gs -dNOSAFER -dBATCH -dNOPAUSE -dQUIET -dEPSCrop -sDEVICE=jpeg -dJPEGQ=95 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${psPath}"`,
-        { timeout: 15000, stdio: 'pipe' }
-      );
-      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
-        console.log(`[renderVectorBufferToJpeg] Strategy 7 success! Out size: ${fs.statSync(outPath).size}`);
-        return fs.readFileSync(outPath);
+      // Inject full Adobe Illustrator compatibility prolog
+      let psWithProlog = psString;
+      const psIndex = psString.indexOf('%!PS');
+      if (psIndex !== -1) {
+        let lineEnd = psString.indexOf('\n', psIndex);
+        if (lineEnd === -1) lineEnd = psIndex + 4;
+        else lineEnd = lineEnd + 1;
+        psWithProlog = psString.slice(0, lineEnd) + '\n' + ADOBE_AI_COMPATIBILITY_PROLOG + '\n' + psString.slice(lineEnd);
+      } else {
+        psWithProlog = '%!PS-Adobe-3.0 EPSF-3.0\n' + ADOBE_AI_COMPATIBILITY_PROLOG + '\n' + psString;
       }
-    } catch (e: any) {
-      console.log(`[renderVectorBufferToJpeg] Strategy 7 failed: ${e.message}`);
-    }
 
-    // Strategy 8: Ghostscript with Fixed Media & Auto-Fit (handles missing/invalid BoundingBoxes)
-    try {
-      execSync(
-        `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=95 -r150 -dDEVICEWIDTHPOINTS=1024 -dDEVICEHEIGHTPOINTS=1024 -dFIXEDMEDIA -dPDFFitPage -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${psPath}"`,
-        { timeout: 15000, stdio: 'pipe' }
-      );
-      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
-        return fs.readFileSync(outPath);
-      }
-    } catch (e) {}
+      const prologPsPath = path.join(tmpDir, `prolog_${randId}${ext}`);
+      try {
+        fs.writeFileSync(prologPsPath, Buffer.from(psWithProlog, 'latin1'));
 
-    // Strategy 9: ImageMagick Convert with density & background flatten
-    try {
-      execSync(`convert -density 150 "${psPath}[0]" -background white -flatten "${outPath}"`, { timeout: 15000, stdio: 'pipe' });
-      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
-        return fs.readFileSync(outPath);
-      }
-    } catch (e) {}
+        try {
+          execSync(
+            `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -dEPSCrop -sDEVICE=jpeg -dJPEGQ=95 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${prologPsPath}"`,
+            { timeout: 15000, stdio: 'pipe' }
+          );
+          if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+            console.log(`[renderVectorBufferToJpeg] Prolog fallback GS success! Out size: ${fs.statSync(outPath).size}`);
+            return fs.readFileSync(outPath);
+          }
+        } catch (e: any) {}
 
-    // Strategy 10: ImageMagick with sRGB colorspace
-    try {
-      execSync(`convert -colorspace sRGB -density 150 "${psPath}" -background white -flatten "${outPath}"`, { timeout: 15000, stdio: 'pipe' });
-      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
-        return fs.readFileSync(outPath);
-      }
-    } catch (e) {}
+        try {
+          execSync(
+            `gs -dNOSAFER -dBATCH -dNOPAUSE -dQUIET -dEPSCrop -sDEVICE=jpeg -dJPEGQ=95 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${prologPsPath}"`,
+            { timeout: 15000, stdio: 'pipe' }
+          );
+          if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+            return fs.readFileSync(outPath);
+          }
+        } catch (e: any) {}
 
-    // Strategy 11: Direct simple convert fallback
-    try {
-      execSync(`convert "${psPath}" -background white -flatten "${outPath}"`, { timeout: 15000, stdio: 'pipe' });
-      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
-        return fs.readFileSync(outPath);
+        try {
+          execSync(`convert -density 150 "${prologPsPath}[0]" -background white -flatten "${outPath}"`, { timeout: 15000, stdio: 'pipe' });
+          if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+            return fs.readFileSync(outPath);
+          }
+        } catch (e: any) {}
+      } finally {
+        if (fs.existsSync(prologPsPath)) {
+          try { fs.unlinkSync(prologPsPath); } catch {}
+        }
       }
-    } catch (e) {} finally {
-      if (fs.existsSync(psPath)) {
-        try { fs.unlinkSync(psPath); } catch {}
+    } catch (prologErr) {}
+
+    // Strategy 8: If cleanPsBuffer was sliced and different from fileBuffer, try original fileBuffer directly as last resort
+    if (fileBuffer.length !== cleanPsBuffer.length) {
+      const origPath = path.join(tmpDir, `orig_${randId}${ext}`);
+      try {
+        fs.writeFileSync(origPath, fileBuffer);
+        try {
+          execSync(
+            `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=95 -r150 -dDEVICEWIDTHPOINTS=1024 -dDEVICEHEIGHTPOINTS=1024 -dFIXEDMEDIA -dPDFFitPage -sOutputFile="${outPath}" "${origPath}"`,
+            { timeout: 15000, stdio: 'pipe' }
+          );
+          if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+            console.log(`[renderVectorBufferToJpeg] Raw fileBuffer direct GS success! Out size: ${fs.statSync(outPath).size}`);
+            return fs.readFileSync(outPath);
+          }
+        } catch {}
+      } finally {
+        if (fs.existsSync(origPath)) {
+          try { fs.unlinkSync(origPath); } catch {}
+        }
       }
     }
 

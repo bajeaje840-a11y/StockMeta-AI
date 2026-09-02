@@ -71,7 +71,7 @@ export function getFormatCategory(filename: string, mimeType: string): FormatCat
   if (['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v'].includes(ext) || mimeType.startsWith('video/')) {
     return 'video';
   }
-  if (['ai', 'eps', 'svg', 'ps', 'cdr'].includes(ext) || mimeType.includes('svg') || mimeType.includes('illustrator') || mimeType.includes('postscript')) {
+  if (['ai', 'eps', 'svg', 'ps', 'cdr'].includes(ext) || mimeType.includes('svg') || mimeType.includes('illustrator') || mimeType.includes('postscript') || mimeType.includes('eps')) {
     return 'vector';
   }
   if (ext === 'pdf' || mimeType.includes('pdf')) {

@@ -230,6 +230,16 @@ export const QueueTable: React.FC<QueueTableProps> = ({
                           alt={file.name}
                           className="w-full h-full object-cover"
                           loading="lazy"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.display = 'none';
+                            const parent = (e.currentTarget as HTMLImageElement).parentElement;
+                            if (parent && !parent.querySelector('.fallback-icon')) {
+                              const icon = document.createElement('div');
+                              icon.className = 'fallback-icon flex items-center justify-center w-full h-full text-zinc-400';
+                              icon.innerHTML = `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>`;
+                              parent.appendChild(icon);
+                            }
+                          }}
                         />
                       ) : (
                         <FileImage className="w-4 h-4 text-zinc-400" />
