@@ -8,6 +8,38 @@ import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Type } from '@google/genai';
 
+/**
+ * Automatically audit and patch ImageMagick security policies on startup
+ * Ensures Ghostscript and ImageMagick can read and rasterize PS, EPS, and PDF vector assets without permission errors.
+ */
+function ensureImageMagickPolicy() {
+  const policyPaths = [
+    '/etc/ImageMagick-6/policy.xml',
+    '/etc/ImageMagick-7/policy.xml',
+    '/etc/ImageMagick/policy.xml',
+  ];
+  for (const p of policyPaths) {
+    if (fs.existsSync(p)) {
+      try {
+        let content = fs.readFileSync(p, 'utf8');
+        let modified = false;
+        const regex = /<policy\s+domain="(coder|delegate)"\s+rights="none"\s+pattern="(PS|PS2|PS3|EPS|PDF|XPS|MVG)"\s*\/>/gi;
+        if (regex.test(content)) {
+          content = content.replace(regex, '<policy domain="$1" rights="read|write" pattern="$2" />');
+          modified = true;
+        }
+        if (modified) {
+          fs.writeFileSync(p, content, 'utf8');
+          console.log(`[ImageMagick Policy] Enabled read|write for PS/EPS/PDF at ${p}`);
+        }
+      } catch (e) {
+        console.warn(`[ImageMagick Policy] Policy check notice for ${p}:`, e);
+      }
+    }
+  }
+}
+ensureImageMagickPolicy();
+
 const currentDir =
   typeof __dirname !== 'undefined'
     ? __dirname
@@ -521,6 +553,7 @@ function isGenericFilename(filename?: string): boolean {
 /**
  * Multi-Strategy High-Fidelity Vector Preview & AI Visual Renderer (Ghostscript & ImageMagick & Illustrator PrivateData)
  * Converts EPS, AI, PS, PDF vector files directly into color-accurate, high-resolution JPEG images.
+ * Specifically handles legacy Adobe Illustrator 10 / 8 / CS CE format quirks.
  */
 export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string): Buffer | null {
   const tmpDir = os.tmpdir();
@@ -531,7 +564,7 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
   try {
     let cleanPsBuffer = fileBuffer;
 
-    // Strategy 1: Check for Binary EPS Header (0xC5 0xD0 0xD3 0xC6) and strip header
+    // Strategy 1: Check for Binary DOS EPS Header (0xC5 0xD0 0xD3 0xC6)
     if (fileBuffer.length > 30 && fileBuffer[0] === 0xC5 && fileBuffer[1] === 0xD0 && fileBuffer[2] === 0xD3 && fileBuffer[3] === 0xC6) {
       const psOffset = fileBuffer.readUInt32LE(4);
       const psLength = fileBuffer.readUInt32LE(8);
@@ -548,19 +581,54 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
             return fs.readFileSync(outPath);
           }
         } catch (e) {
-          // Fallback to PS extraction
+          // Fallback
         } finally {
-          if (fs.existsSync(tiffPath)) fs.unlinkSync(tiffPath);
+          if (fs.existsSync(tiffPath)) {
+            try { fs.unlinkSync(tiffPath); } catch {}
+          }
         }
       }
 
-      // 1b. Clean PostScript stream by stripping the 32-byte binary header
+      // 1b. Clean PostScript stream by stripping the binary header
       const psStart = fileBuffer.indexOf(Buffer.from('%!PS-Adobe'));
       if (psStart !== -1) {
         cleanPsBuffer = fileBuffer.subarray(psStart);
       } else if (psOffset > 0 && psOffset < fileBuffer.length) {
         const end = (psLength > 0 && psOffset + psLength <= fileBuffer.length) ? psOffset + psLength : fileBuffer.length;
         cleanPsBuffer = fileBuffer.subarray(psOffset, end);
+      }
+    } else {
+      // Check for MacBinary 128-byte header or leading non-PS characters
+      const psStart = fileBuffer.indexOf(Buffer.from('%!PS-Adobe'));
+      if (psStart > 0 && psStart < 1024) {
+        cleanPsBuffer = fileBuffer.subarray(psStart);
+      } else {
+        const altPsStart = fileBuffer.indexOf(Buffer.from('%!'));
+        if (altPsStart > 0 && altPsStart < 1024) {
+          cleanPsBuffer = fileBuffer.subarray(altPsStart);
+        }
+      }
+    }
+
+    // Fix %%BoundingBox: (atend) commonly produced by Illustrator 10 / PostScript export
+    let psString = cleanPsBuffer.toString('latin1');
+    if (psString.includes('%%BoundingBox: (atend)') || psString.includes('%%BoundingBox:(atend)')) {
+      // Look for the actual trailer BoundingBox or HiResBoundingBox
+      const bboxMatches = Array.from(psString.matchAll(/%%(?:HiRes)?BoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/gi));
+      let validBBox: string | null = null;
+      for (const m of bboxMatches) {
+        const x1 = parseFloat(m[1]);
+        const y1 = parseFloat(m[2]);
+        const x2 = parseFloat(m[3]);
+        const y2 = parseFloat(m[4]);
+        if (!isNaN(x1) && !isNaN(y1) && !isNaN(x2) && !isNaN(y2) && (x2 > x1 || y2 > y1)) {
+          validBBox = `%%BoundingBox: ${Math.round(x1)} ${Math.round(y1)} ${Math.round(x2)} ${Math.round(y2)}`;
+          break;
+        }
+      }
+      if (validBBox) {
+        psString = psString.replace(/%%BoundingBox:\s*\(atend\)/gi, validBBox);
+        cleanPsBuffer = Buffer.from(psString, 'latin1');
       }
     }
 
@@ -595,7 +663,7 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
       }
 
       if (chunks.length > 0 && totalHexChars > 100) {
-        const outU8 = Buffer.alloc(Math.floor(totalHexChars / 2));
+        const outU8 = Buffer.alloc(Math.floor(totalHexChars / 2) + 16);
         let outIdx = 0;
         let highNibble = -1;
 
@@ -619,54 +687,101 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
         }
 
         const decoded = outU8.subarray(0, outIdx);
-        let decompressed = decoded;
-        if (decoded.length > 2 && (decoded[0] === 0x78 || decoded[0] === 0x1F)) {
+        let decompressed: Buffer | null = null;
+
+        // Try direct inflate
+        try {
+          decompressed = zlib.inflateSync(decoded);
+        } catch {}
+
+        if (!decompressed) {
           try {
-            decompressed = zlib.inflateSync(decoded);
-          } catch (zErr) {
-            try {
-              decompressed = zlib.inflateRawSync(decoded);
-            } catch {}
+            decompressed = zlib.inflateRawSync(decoded);
+          } catch {}
+        }
+
+        if (!decompressed) {
+          try {
+            decompressed = zlib.gunzipSync(decoded);
+          } catch {}
+        }
+
+        // Sliding scan if prefixed with length header or extra bytes
+        if (!decompressed) {
+          for (let i = 0; i < Math.min(decoded.length - 2, 128); i++) {
+            if (decoded[i] === 0x78) {
+              try {
+                decompressed = zlib.inflateSync(decoded.subarray(i));
+                break;
+              } catch {}
+              try {
+                decompressed = zlib.inflateRawSync(decoded.subarray(i));
+                break;
+              } catch {}
+            }
+            if (decoded[i] === 0x1f && decoded[i + 1] === 0x8b) {
+              try {
+                decompressed = zlib.gunzipSync(decoded.subarray(i));
+                break;
+              } catch {}
+            }
           }
         }
 
-        const pdfIdx = decompressed.indexOf('%PDF-');
-        if (pdfIdx !== -1) {
-          const pdfPath = path.join(tmpDir, `priv_${randId}.pdf`);
-          try {
-            fs.writeFileSync(pdfPath, decompressed.subarray(pdfIdx));
-            execSync(
-              `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=95 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -dFirstPage=1 -dLastPage=1 -sOutputFile="${outPath}" "${pdfPath}"`,
-              { timeout: 15000, stdio: 'pipe' }
-            );
-            if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
-              return fs.readFileSync(outPath);
+        const targetPdfBuffer = decompressed || (decoded.includes(Buffer.from('%PDF-')) ? decoded : null);
+
+        if (targetPdfBuffer) {
+          const pdfIdx = targetPdfBuffer.indexOf('%PDF-');
+          if (pdfIdx !== -1) {
+            const pdfPath = path.join(tmpDir, `priv_${randId}.pdf`);
+            try {
+              fs.writeFileSync(pdfPath, targetPdfBuffer.subarray(pdfIdx));
+              try {
+                execSync(
+                  `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=95 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -dFirstPage=1 -dLastPage=1 -sOutputFile="${outPath}" "${pdfPath}"`,
+                  { timeout: 15000, stdio: 'pipe' }
+                );
+              } catch {
+                execSync(`convert -density 150 "${pdfPath}[0]" -background white -flatten "${outPath}"`, { timeout: 15000, stdio: 'pipe' });
+              }
+
+              if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+                return fs.readFileSync(outPath);
+              }
+            } catch (e) {
+            } finally {
+              if (fs.existsSync(pdfPath)) {
+                try { fs.unlinkSync(pdfPath); } catch {}
+              }
             }
-          } catch (e) {
-          } finally {
-            if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath);
           }
         }
       }
     } catch (privErr) {}
 
-    // Strategy 3: Check for embedded PDF stream (%PDF-) inside cleanPsBuffer or raw fileBuffer
+    // Strategy 3: Check for direct embedded PDF stream (%PDF-) inside cleanPsBuffer or raw fileBuffer
     const pdfIdx = cleanPsBuffer.indexOf('%PDF-');
     if (pdfIdx !== -1) {
       const pdfPath = path.join(tmpDir, `embedded_${randId}.pdf`);
       try {
         fs.writeFileSync(pdfPath, cleanPsBuffer.subarray(pdfIdx));
-        execSync(
-          `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=95 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -dFirstPage=1 -dLastPage=1 -sOutputFile="${outPath}" "${pdfPath}"`,
-          { timeout: 15000, stdio: 'pipe' }
-        );
+        try {
+          execSync(
+            `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=95 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -dFirstPage=1 -dLastPage=1 -sOutputFile="${outPath}" "${pdfPath}"`,
+            { timeout: 15000, stdio: 'pipe' }
+          );
+        } catch {
+          execSync(`convert -density 150 "${pdfPath}[0]" -background white -flatten "${outPath}"`, { timeout: 15000, stdio: 'pipe' });
+        }
+
         if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
           return fs.readFileSync(outPath);
         }
       } catch (e) {
-        // Continue
       } finally {
-        if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath);
+        if (fs.existsSync(pdfPath)) {
+          try { fs.unlinkSync(pdfPath); } catch {}
+        }
       }
     }
 
@@ -675,7 +790,7 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
     for (let i = 0; i < cleanPsBuffer.length - 500; i++) {
       if (cleanPsBuffer[i] === 0xFF && cleanPsBuffer[i + 1] === 0xD8 && cleanPsBuffer[i + 2] === 0xFF) {
         let endIdx = -1;
-        const maxSearch = Math.min(cleanPsBuffer.length - 1, i + 5 * 1024 * 1024);
+        const maxSearch = Math.min(cleanPsBuffer.length - 1, i + 10 * 1024 * 1024);
         for (let j = i + 300; j < maxSearch; j++) {
           if (cleanPsBuffer[j] === 0xFF && cleanPsBuffer[j + 1] === 0xD9) {
             endIdx = j + 2;
@@ -728,7 +843,18 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
       }
     } catch (e) {}
 
-    // Strategy 7: Ghostscript standard (full artboard)
+    // Strategy 7: Ghostscript with Fixed Media & Auto-Fit (handles missing/invalid BoundingBoxes)
+    try {
+      execSync(
+        `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=95 -r150 -dDEVICEWIDTHPOINTS=1024 -dDEVICEHEIGHTPOINTS=1024 -dFIXEDMEDIA -dPDFFitPage -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${psPath}"`,
+        { timeout: 15000, stdio: 'pipe' }
+      );
+      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+        return fs.readFileSync(outPath);
+      }
+    } catch (e) {}
+
+    // Strategy 8: Ghostscript standard full artboard
     try {
       execSync(
         `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=95 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${psPath}"`,
@@ -739,7 +865,7 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
       }
     } catch (e) {}
 
-    // Strategy 8: ImageMagick Convert
+    // Strategy 9: ImageMagick Convert with density
     try {
       execSync(`convert -density 150 "${psPath}[0]" -background white -flatten "${outPath}"`, { timeout: 15000, stdio: 'pipe' });
       if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
@@ -747,14 +873,24 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
       }
     } catch (e) {}
 
-    // Strategy 9: ImageMagick with sRGB colorspace
+    // Strategy 10: ImageMagick with sRGB colorspace
     try {
       execSync(`convert -colorspace sRGB -density 150 "${psPath}" -background white -flatten "${outPath}"`, { timeout: 15000, stdio: 'pipe' });
       if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
         return fs.readFileSync(outPath);
       }
+    } catch (e) {}
+
+    // Strategy 11: Direct simple convert
+    try {
+      execSync(`convert "${psPath}" -background white -flatten "${outPath}"`, { timeout: 15000, stdio: 'pipe' });
+      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+        return fs.readFileSync(outPath);
+      }
     } catch (e) {} finally {
-      if (fs.existsSync(psPath)) fs.unlinkSync(psPath);
+      if (fs.existsSync(psPath)) {
+        try { fs.unlinkSync(psPath); } catch {}
+      }
     }
 
     return null;

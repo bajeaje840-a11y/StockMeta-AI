@@ -1063,87 +1063,510 @@ export async function extractEmbeddedImageFromVector(file: File): Promise<{ prev
 }
 
 /**
- * Creates a clean, professional vector representation badge when an EPS has no embedded raster preview.
- * NOTE: Returns base64Data as empty string so AI vision models are NEVER sent the placeholder badge!
+ * Generates a clean SVG vector icon fallback with file dimensions, color mode, creator, and typography
+ * extracted from the EPS PostScript headers.
  */
-export async function renderEpsCanvasPreview(file: File): Promise<{ previewUrl: string; base64Data: string; mimeTypeForAi: string; isRealArtworkPreview: boolean }> {
+export function generateEpsFallbackSvg(options: {
+  filename: string;
+  fileSize: number;
+  dimensions?: { width: number; height: number; formattedDimensions: string };
+  colorMode: string;
+  creator?: string;
+  cleanSubject?: string;
+  colors?: string[];
+}): string {
+  const { filename, fileSize, dimensions, colorMode, creator, cleanSubject, colors = [] } = options;
+  const dimStr = dimensions ? dimensions.formattedDimensions : 'Vector Artboard';
+  const modeStr = colorMode || 'CMYK';
+  const displayTitle = cleanSubject || filename.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+  const displaySubtitle = `${filename} • ${bytesToSize(fileSize)}${creator ? ` • ${creator}` : ''}`;
+
+  const defaultPalette = ['#4f46e5', '#06b6d4', '#10b981', '#f59e0b', '#ec4899'];
+  const palette = colors.length >= 2 ? colors.slice(0, 6) : defaultPalette;
+
+  // Swatches SVG markup
+  let swatchesSvg = '';
+  const swatchWidth = 28;
+  const startX = 400 - (palette.length * (swatchWidth + 8)) / 2;
+  palette.forEach((col, idx) => {
+    swatchesSvg += `<rect x="${startX + idx * (swatchWidth + 8)}" y="430" width="${swatchWidth}" height="14" rx="3" fill="${col}" stroke="#cbd5e1" stroke-width="1"/>`;
+  });
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" width="800" height="600">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f8fafc"/>
+      <stop offset="100%" stop-color="#f1f5f9"/>
+    </linearGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#e2e8f0" stroke-width="0.8"/>
+    </pattern>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#0f172a" flood-opacity="0.06"/>
+    </filter>
+  </defs>
+  
+  <!-- Canvas Background -->
+  <rect width="800" height="600" fill="url(#bgGrad)"/>
+  <rect width="800" height="600" fill="url(#grid)"/>
+
+  <!-- Artboard Frame -->
+  <rect x="30" y="30" width="740" height="540" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" filter="url(#shadow)"/>
+  
+  <!-- Header Badges -->
+  <g transform="translate(60, 60)">
+    <!-- Format Badge -->
+    <rect x="0" y="0" width="72" height="28" rx="6" fill="#4f46e5" fill-opacity="0.1"/>
+    <text x="36" y="18" fill="#4f46e5" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="700" text-anchor="middle">EPS</text>
+
+    <!-- Color Mode Badge -->
+    <rect x="80" y="0" width="88" height="28" rx="6" fill="#0284c7" fill-opacity="0.1"/>
+    <text x="124" y="18" fill="#0284c7" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="700" text-anchor="middle">${modeStr}</text>
+
+    <!-- Dimensions Badge -->
+    <rect x="176" y="0" width="130" height="28" rx="6" fill="#475569" fill-opacity="0.08"/>
+    <text x="241" y="18" fill="#475569" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="600" text-anchor="middle">${dimStr}</text>
+  </g>
+
+  <!-- Vector Curves and Bezier Nodes Graphic -->
+  <g transform="translate(400, 240)">
+    <!-- Bezier Guides -->
+    <path d="M -180 40 C -80 -90, 80 90, 180 -40" fill="none" stroke="#6366f1" stroke-width="2.5" stroke-opacity="0.7"/>
+    <path d="M -160 -30 C -60 80, 60 -80, 160 30" fill="none" stroke="#0ea5e9" stroke-width="2.5" stroke-opacity="0.7"/>
+    
+    <!-- Bezier Nodes -->
+    <rect x="-184" y="36" width="8" height="8" fill="#ffffff" stroke="#6366f1" stroke-width="2"/>
+    <rect x="176" y="-44" width="8" height="8" fill="#ffffff" stroke="#6366f1" stroke-width="2"/>
+    <circle cx="-80" cy="-90" r="3.5" fill="#6366f1"/>
+    <circle cx="80" cy="90" r="3.5" fill="#6366f1"/>
+    <line x1="-180" y1="40" x2="-80" y2="-90" stroke="#c7d2fe" stroke-width="1.5" stroke-dasharray="3,3"/>
+    <line x1="180" y1="-40" x2="80" y2="90" stroke="#c7d2fe" stroke-width="1.5" stroke-dasharray="3,3"/>
+
+    <!-- Central Vector Pen Emblem -->
+    <rect x="-42" y="-42" width="84" height="84" rx="20" fill="#4f46e5" filter="url(#shadow)"/>
+    <path d="M 0 -22 L 18 10 L 0 26 L -18 10 Z" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="0" cy="8" r="3" fill="#ffffff"/>
+  </g>
+
+  <!-- Swatches -->
+  ${swatchesSvg}
+
+  <!-- Typography -->
+  <text x="400" y="485" fill="#0f172a" font-family="system-ui, -apple-system, sans-serif" font-size="22" font-weight="700" text-anchor="middle">${displayTitle}</text>
+  <text x="400" y="515" fill="#64748b" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="500" text-anchor="middle">${displaySubtitle}</text>
+</svg>`;
+}
+
+/**
+ * Generates a deterministic visual thumbnail from vector file structure (PostScript paths, BoundingBox, colors, or structural nodes)
+ * when primary rasterization steps fail, guaranteeing every EPS/vector file has a high-quality visual preview.
+ */
+export async function generateDeterministicVectorThumbnail(file: File): Promise<{
+  previewUrl: string;
+  base64Data: string;
+  mimeTypeForAi: string;
+  isRealArtworkPreview: boolean;
+}> {
   let psText = '';
   try {
     const textDecoder = new TextDecoder('latin1');
-    const buffer = await file.slice(0, 500000).arrayBuffer();
+    const buffer = await file.slice(0, Math.min(file.size, 1024 * 1024)).arrayBuffer();
     psText = textDecoder.decode(buffer);
   } catch (e) {
-    console.warn('Could not decode EPS text:', e);
+    console.warn('Could not decode vector file slice for deterministic thumbnail:', e);
   }
 
+  const semInfo = extractVectorSemanticInfo(psText, file.name);
   const ext = getFileExtension(file.name).toUpperCase() || 'EPS';
-  const cleanSubject = cleanVectorSubject(file.name);
+  const cleanSubject = semInfo.cleanSubject || cleanVectorSubject(file.name);
+  const colorMode = semInfo.colorMode || 'CMYK';
+  const dimensions = semInfo.dimensions;
+  const creator = semInfo.creator || '';
 
-  let creator = '';
-  const creatorMatch = psText.match(/%%Creator:\s*(.+)/i);
-  if (creatorMatch && creatorMatch[1]) {
-    creator = creatorMatch[1].trim();
+  // 1. Extract BoundingBox if present
+  let bbox = { llx: 0, lly: 0, urx: 600, ury: 600, width: 600, height: 600 };
+  if (dimensions) {
+    bbox = {
+      llx: dimensions.minX,
+      lly: dimensions.minY,
+      urx: dimensions.maxX,
+      ury: dimensions.maxY,
+      width: dimensions.width,
+      height: dimensions.height,
+    };
+  } else {
+    const bboxMatch = psText.match(/%%BoundingBox:\s*(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)/i);
+    if (bboxMatch && bboxMatch[1] !== '(atend)') {
+      const llx = parseInt(bboxMatch[1], 10);
+      const lly = parseInt(bboxMatch[2], 10);
+      const urx = parseInt(bboxMatch[3], 10);
+      const ury = parseInt(bboxMatch[4], 10);
+      if (!isNaN(llx) && !isNaN(lly) && !isNaN(urx) && !isNaN(ury) && urx > llx && ury > lly) {
+        bbox = { llx, lly, urx, ury, width: urx - llx, height: ury - lly };
+      }
+    }
   }
 
-  // Create clean 800x600 preview artboard card
+  // 2. Extract Palette Colors from PostScript operators and metadata
+  const extractedColors: string[] = [...(semInfo.colors || [])];
+  const rgbRegex = /([0-1](?:\.\d+)?)\s+([0-1](?:\.\d+)?)\s+([0-1](?:\.\d+)?)\s+(?:setrgbcolor|rg|RG)\b/g;
+  let rgbMatch;
+  while ((rgbMatch = rgbRegex.exec(psText)) !== null && extractedColors.length < 12) {
+    const r = Math.round(parseFloat(rgbMatch[1]) * 255);
+    const g = Math.round(parseFloat(rgbMatch[2]) * 255);
+    const b = Math.round(parseFloat(rgbMatch[3]) * 255);
+    if (!isNaN(r) && !isNaN(g) && !isNaN(b) && (r < 240 || g < 240 || b < 240)) {
+      const hex = `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+      if (!extractedColors.includes(hex)) extractedColors.push(hex);
+    }
+  }
+
+  const cmykRegex = /([0-1](?:\.\d+)?)\s+([0-1](?:\.\d+)?)\s+([0-1](?:\.\d+)?)\s+([0-1](?:\.\d+)?)\s+(?:setcmykcolor|k|K)\b/g;
+  let cmykMatch;
+  while ((cmykMatch = cmykRegex.exec(psText)) !== null && extractedColors.length < 12) {
+    const c = parseFloat(cmykMatch[1]);
+    const m = parseFloat(cmykMatch[2]);
+    const y = parseFloat(cmykMatch[3]);
+    const k = parseFloat(cmykMatch[4]);
+    if (!isNaN(c) && !isNaN(m) && !isNaN(y) && !isNaN(k)) {
+      const r = Math.round(255 * (1 - c) * (1 - k));
+      const g = Math.round(255 * (1 - m) * (1 - k));
+      const b = Math.round(255 * (1 - y) * (1 - k));
+      const hex = `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+      if (!extractedColors.includes(hex)) extractedColors.push(hex);
+    }
+  }
+
+  // Deterministic PRNG Seed from filename + file size
+  let seed = 0x811c9dc5;
+  const seedStr = `${file.name}_${file.size}_${psText.slice(0, 500)}`;
+  for (let i = 0; i < seedStr.length; i++) {
+    seed ^= seedStr.charCodeAt(i);
+    seed = Math.imul(seed, 0x01000193);
+  }
+  const prng = () => {
+    seed = (seed ^ (seed << 13)) >>> 0;
+    seed = (seed ^ (seed >> 17)) >>> 0;
+    seed = (seed ^ (seed << 5)) >>> 0;
+    return (seed >>> 0) / 4294967296;
+  };
+
+  // Default color palette if none found in PS stream
+  const defaultPalettes = [
+    ['#3b82f6', '#6366f1', '#8b5cf6', '#ec4899', '#f43f5e'],
+    ['#06b6d4', '#0ea5e9', '#3b82f6', '#10b981', '#14b8a6'],
+    ['#f59e0b', '#ef4444', '#ec4899', '#8b5cf6', '#6366f1'],
+    ['#10b981', '#059669', '#047857', '#0284c7', '#0369a1'],
+    ['#6366f1', '#4f46e5', '#4338ca', '#3730a3', '#1e1b4b'],
+  ];
+  const palette = extractedColors.length >= 2 ? extractedColors : defaultPalettes[Math.floor(prng() * defaultPalettes.length)];
+
+  // Try parsing raw PostScript path commands if available
+  interface PsCommand {
+    type: 'moveto' | 'lineto' | 'curveto' | 'rectfill' | 'rectstroke' | 'close';
+    x?: number;
+    y?: number;
+    x1?: number;
+    y1?: number;
+    x2?: number;
+    y2?: number;
+    x3?: number;
+    y3?: number;
+    w?: number;
+    h?: number;
+    color?: string;
+  }
+  const parsedCommands: PsCommand[] = [];
+  const lines = psText.split(/\r?\n/);
+  let activeColor = palette[0];
+
+  for (let i = 0; i < Math.min(lines.length, 3000); i++) {
+    const line = lines[i].trim();
+    if (!line || line.startsWith('%')) continue;
+
+    // Check color assignment
+    const rgbLine = line.match(/^([0-1](?:\.\d+)?)\s+([0-1](?:\.\d+)?)\s+([0-1](?:\.\d+)?)\s+(?:setrgbcolor|rg)\b/);
+    if (rgbLine) {
+      const r = Math.round(parseFloat(rgbLine[1]) * 255);
+      const g = Math.round(parseFloat(rgbLine[2]) * 255);
+      const b = Math.round(parseFloat(rgbLine[3]) * 255);
+      activeColor = `rgb(${r},${g},${b})`;
+    }
+
+    // moveto / lineto / curveto / rectfill
+    const moveMatch = line.match(/^(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(?:moveto|m)\b/);
+    if (moveMatch) {
+      parsedCommands.push({ type: 'moveto', x: parseFloat(moveMatch[1]), y: parseFloat(moveMatch[2]), color: activeColor });
+    }
+    const lineMatch = line.match(/^(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(?:lineto|l)\b/);
+    if (lineMatch) {
+      parsedCommands.push({ type: 'lineto', x: parseFloat(lineMatch[1]), y: parseFloat(lineMatch[2]), color: activeColor });
+    }
+    const curveMatch = line.match(/^(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(?:curveto|c)\b/);
+    if (curveMatch) {
+      parsedCommands.push({
+        type: 'curveto',
+        x1: parseFloat(curveMatch[1]),
+        y1: parseFloat(curveMatch[2]),
+        x2: parseFloat(curveMatch[3]),
+        y2: parseFloat(curveMatch[4]),
+        x3: parseFloat(curveMatch[5]),
+        y3: parseFloat(curveMatch[6]),
+        color: activeColor,
+      });
+    }
+    const rectMatch = line.match(/^(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(?:rectfill|rectstroke|re)\b/);
+    if (rectMatch) {
+      parsedCommands.push({
+        type: line.includes('stroke') ? 'rectstroke' : 'rectfill',
+        x: parseFloat(rectMatch[1]),
+        y: parseFloat(rectMatch[2]),
+        w: parseFloat(rectMatch[3]),
+        h: parseFloat(rectMatch[4]),
+        color: activeColor,
+      });
+    }
+
+    if (parsedCommands.length >= 1000) break;
+  }
+
+  // Draw Canvas Thumbnail (800 x 600)
   const canvas = document.createElement('canvas');
   canvas.width = 800;
   canvas.height = 600;
   const ctx = canvas.getContext('2d');
 
   if (ctx) {
-    // Pure Clean Artboard Backdrop
+    // Backdrop
     ctx.fillStyle = '#f8fafc';
     ctx.fillRect(0, 0, 800, 600);
 
-    // Clean subtle border
+    // Subtle Vector Grid
+    ctx.strokeStyle = '#f1f5f9';
+    ctx.lineWidth = 1;
+    for (let x = 40; x < 800; x += 40) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, 600);
+      ctx.stroke();
+    }
+    for (let y = 40; y < 600; y += 40) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(800, y);
+      ctx.stroke();
+    }
+
+    // Outer Artboard Border
     ctx.strokeStyle = '#e2e8f0';
-    ctx.lineWidth = 3;
-    ctx.strokeRect(16, 16, 768, 568);
+    ctx.lineWidth = 2;
+    ctx.strokeRect(20, 20, 760, 560);
 
-    // Vector Emblem Box
-    ctx.fillStyle = '#4f46e5';
-    ctx.beginPath();
-    ctx.roundRect(330, 160, 140, 140, 24);
-    ctx.fill();
-
-    // Emblem Text
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 36px system-ui, -apple-system, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(ext, 400, 230);
-
-    // File name & Subject in Center
-    ctx.fillStyle = '#0f172a';
-    ctx.font = 'bold 24px system-ui, -apple-system, sans-serif';
-    ctx.fillText(cleanSubject, 400, 360);
-
-    ctx.font = '15px system-ui, -apple-system, sans-serif';
-    ctx.fillStyle = '#64748b';
-    ctx.fillText(`${file.name} • ${bytesToSize(file.size)}${creator ? ` • ${creator}` : ''}`, 400, 400);
-
-    // Badge pill
+    // Header Badges: Format, Color Mode, Dimensions
+    // Format Badge (EPS)
     ctx.fillStyle = '#eef2ff';
     ctx.beginPath();
-    ctx.roundRect(280, 440, 240, 38, 19);
+    ctx.roundRect(40, 40, 60, 26, 6);
+    ctx.fill();
+    ctx.fillStyle = '#4f46e5';
+    ctx.font = 'bold 12px system-ui, -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(ext, 70, 53);
+
+    // Color Mode Badge (CMYK / RGB / Grayscale)
+    ctx.fillStyle = '#f0f9ff';
+    ctx.beginPath();
+    ctx.roundRect(110, 40, 84, 26, 6);
+    ctx.fill();
+    ctx.fillStyle = '#0284c7';
+    ctx.font = 'bold 12px system-ui, -apple-system, sans-serif';
+    ctx.fillText(colorMode, 152, 53);
+
+    // Dimensions Badge (e.g. 800 x 600 pt)
+    const dimText = dimensions ? dimensions.formattedDimensions : `${bbox.width} × ${bbox.height} pt`;
+    ctx.fillStyle = '#f8fafc';
+    ctx.beginPath();
+    ctx.roundRect(204, 40, 140, 26, 6);
+    ctx.fill();
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = '#475569';
+    ctx.font = '600 12px system-ui, -apple-system, sans-serif';
+    ctx.fillText(dimText, 274, 53);
+
+    // Render path commands if found
+    if (parsedCommands.length >= 8) {
+      const artArea = { x: 50, y: 80, w: 700, h: 360 };
+      const scaleX = artArea.w / (bbox.width || 600);
+      const scaleY = artArea.h / (bbox.height || 600);
+      const scale = Math.min(scaleX, scaleY);
+
+      ctx.save();
+      ctx.translate(artArea.x + (artArea.w - bbox.width * scale) / 2, artArea.y + (artArea.h - bbox.height * scale) / 2);
+
+      // PostScript has origin at bottom-left, Canvas at top-left
+      ctx.transform(scale, 0, 0, -scale, -bbox.llx * scale, (bbox.height + bbox.lly) * scale);
+
+      ctx.lineWidth = 2 / scale;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      let inPath = false;
+      for (const cmd of parsedCommands) {
+        if (cmd.type === 'moveto') {
+          if (inPath) ctx.stroke();
+          ctx.beginPath();
+          ctx.strokeStyle = cmd.color || palette[0];
+          ctx.fillStyle = cmd.color || palette[0];
+          ctx.moveTo(cmd.x!, cmd.y!);
+          inPath = true;
+        } else if (cmd.type === 'lineto') {
+          ctx.lineTo(cmd.x!, cmd.y!);
+        } else if (cmd.type === 'curveto') {
+          ctx.bezierCurveTo(cmd.x1!, cmd.y1!, cmd.x2!, cmd.y2!, cmd.x3!, cmd.y3!);
+        } else if (cmd.type === 'rectfill') {
+          ctx.fillStyle = cmd.color || palette[0];
+          ctx.fillRect(cmd.x!, cmd.y!, cmd.w!, cmd.h!);
+        } else if (cmd.type === 'rectstroke') {
+          ctx.strokeStyle = cmd.color || palette[0];
+          ctx.strokeRect(cmd.x!, cmd.y!, cmd.w!, cmd.h!);
+        }
+      }
+      if (inPath) ctx.stroke();
+      ctx.restore();
+    } else {
+      // Deterministic Geometric Structure & Bezier Nodes Artwork
+      const centerX = 400;
+      const centerY = 230;
+
+      // Draw vector geometry curves
+      const numCurves = 4 + Math.floor(prng() * 3);
+      for (let c = 0; c < numCurves; c++) {
+        const color = palette[c % palette.length];
+        ctx.strokeStyle = color;
+        ctx.fillStyle = `${color}18`;
+        ctx.lineWidth = 3;
+
+        ctx.beginPath();
+        const startX = centerX - 180 + prng() * 60;
+        const startY = centerY + (prng() - 0.5) * 120;
+        const cp1X = centerX - 60 + (prng() - 0.5) * 100;
+        const cp1Y = centerY - 120 + (prng() - 0.5) * 60;
+        const cp2X = centerX + 60 + (prng() - 0.5) * 100;
+        const cp2Y = centerY + 120 + (prng() - 0.5) * 60;
+        const endX = centerX + 180 - prng() * 60;
+        const endY = centerY + (prng() - 0.5) * 120;
+
+        ctx.moveTo(startX, startY);
+        ctx.bezierCurveTo(cp1X, cp1Y, cp2X, cp2Y, endX, endY);
+        ctx.stroke();
+
+        // Bezier Node Handles & Control Points
+        ctx.fillStyle = '#ffffff';
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+
+        // Start Node
+        ctx.fillRect(startX - 4, startY - 4, 8, 8);
+        ctx.strokeRect(startX - 4, startY - 4, 8, 8);
+
+        // End Node
+        ctx.fillRect(endX - 4, endY - 4, 8, 8);
+        ctx.strokeRect(endX - 4, endY - 4, 8, 8);
+
+        // Control point circle
+        ctx.beginPath();
+        ctx.arc(cp1X, cp1Y, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(cp2X, cp2Y, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+
+      // Central Vector Pen Emblem
+      ctx.fillStyle = palette[0] || '#4f46e5';
+      ctx.beginPath();
+      ctx.roundRect(355, 185, 90, 90, 20);
+      ctx.fill();
+
+      // Pen Icon
+      ctx.strokeStyle = '#ffffff';
+      ctx.fillStyle = '#ffffff';
+      ctx.lineWidth = 3.5;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(400, 208);
+      ctx.lineTo(418, 240);
+      ctx.lineTo(400, 258);
+      ctx.lineTo(382, 240);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(400, 236, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Palette Color Swatches Bar
+    const swatchW = 24;
+    const totalSwatchW = palette.length * (swatchW + 8);
+    let swatchStartX = 400 - totalSwatchW / 2;
+    for (const col of palette) {
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.roundRect(swatchStartX, 440, swatchW, 14, 4);
+      ctx.fill();
+      ctx.strokeStyle = '#cbd5e1';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      swatchStartX += swatchW + 8;
+    }
+
+    // Clean Typography in Center Bottom
+    ctx.fillStyle = '#0f172a';
+    ctx.font = 'bold 22px system-ui, -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(cleanSubject || file.name, 400, 485);
+
+    ctx.font = '14px system-ui, -apple-system, sans-serif';
+    ctx.fillStyle = '#64748b';
+    ctx.fillText(`${file.name} • ${bytesToSize(file.size)}${creator ? ` • ${creator}` : ''}`, 400, 515);
+
+    // Vector Pill Badge
+    ctx.fillStyle = '#eef2ff';
+    ctx.beginPath();
+    ctx.roundRect(280, 538, 240, 30, 15);
     ctx.fill();
     ctx.strokeStyle = '#c7d2fe';
     ctx.lineWidth = 1;
     ctx.stroke();
 
     ctx.fillStyle = '#4338ca';
-    ctx.font = 'bold 14px system-ui, -apple-system, sans-serif';
-    ctx.fillText('Scalable Vector Graphic', 400, 459);
+    ctx.font = 'bold 12px system-ui, -apple-system, sans-serif';
+    ctx.fillText(`${ext} Vector Artwork • ${colorMode}`, 400, 553);
   }
 
   const jpegUrl = canvas.toDataURL('image/jpeg', 0.90);
   return {
     previewUrl: jpegUrl,
-    base64Data: '', // CRITICAL: Keep empty for AI vision so AI doesn't see placeholder badge
+    base64Data: '', // CRITICAL: Keep empty for AI vision so AI vision models don't analyze placeholder graphic
     mimeTypeForAi: 'image/jpeg',
     isRealArtworkPreview: false,
   };
+}
+
+/**
+ * Creates a clean, professional vector representation badge when an EPS has no embedded raster preview.
+ * NOTE: Returns base64Data as empty string so AI vision models are NEVER sent the placeholder badge!
+ */
+export async function renderEpsCanvasPreview(file: File): Promise<{ previewUrl: string; base64Data: string; mimeTypeForAi: string; isRealArtworkPreview: boolean }> {
+  return generateDeterministicVectorThumbnail(file);
 }
 
 /**
@@ -1255,19 +1678,8 @@ export async function prepareFileForAi(file: File): Promise<{
       }
 
       try {
-        // 1st Priority: Instant Binary EPS TIFF check (< 2ms, 30 bytes check)
-        const tiffExtracted = await extractTiffFromBinaryEps(file);
-        if (tiffExtracted && tiffExtracted.base64Data) {
-          return {
-            ...tiffExtracted,
-            isRealArtworkPreview: true,
-            vectorSemanticText,
-            cleanSubject,
-          };
-        }
-
-        // 2nd Priority: Server-Side Ghostscript & Multi-Strategy Vector Engine (up to 50MB, fast native binary, 0% browser load)
-        if (file.size <= 50 * 1024 * 1024) {
+        // 1st Priority: Server-Side Ghostscript & Multi-Strategy Vector Engine (up to 80MB, fast native binary, 0% browser load)
+        if (file.size <= 80 * 1024 * 1024) {
           const serverRendered = await renderVectorViaServer(file);
           if (serverRendered && serverRendered.base64Data) {
             return {
@@ -1277,6 +1689,17 @@ export async function prepareFileForAi(file: File): Promise<{
               cleanSubject,
             };
           }
+        }
+
+        // 2nd Priority: Instant Binary EPS TIFF check (< 2ms, 30 bytes check)
+        const tiffExtracted = await extractTiffFromBinaryEps(file);
+        if (tiffExtracted && tiffExtracted.base64Data) {
+          return {
+            ...tiffExtracted,
+            isRealArtworkPreview: true,
+            vectorSemanticText,
+            cleanSubject,
+          };
         }
 
         // 3rd Priority: Other embedded stream extraction (AI Private Data / PDF Stream / XMP)

@@ -2,14 +2,31 @@
  * Vector Semantic Content & Metadata Extractor
  * 
  * Deeply parses EPS, AI, PostScript, and PDF files to extract authentic metadata:
- * - Document Titles (%%Title:, <dc:title>)
+ * - Document Titles (%%Title:, <dc:title>, /Title) with Central European / Octal unescaping
+ * - Document Creators (%%Creator:, <xmp:CreatorTool>, Illustrator 10 CE quirks)
+ * - BoundingBox & Dimensions (%%BoundingBox:, %%HiResBoundingBox:, %%CropBox:, %AI5_ArtBounds:)
+ * - Color Mode (%%DocumentProcessColors:, %AI5_File:, %AI3_ColorUsage:, <photoshop:ColorMode>)
  * - Subjects & Descriptions (%%Subject:, <dc:description>, <photoshop:Headline>)
  * - Embedded Keywords (%%Keywords:, <dc:subject>, <pdf:Keywords>)
  * - Layer Names (%%BeginLayer:, %AI5_BeginLayer, /LayerName)
  * - Display Text Strings ((...) show, (...) Tj, [...] TJ)
- * - Color Palettes & Spot Colors (%%DocumentCustomColors:, %%DocumentProcessColors:)
- * - Creator Software (%%Creator:, <xmp:CreatorTool>)
+ * - Color Palettes & Spot Colors (%%DocumentCustomColors:, %%DocumentProcessColors:, %%CMYKCustomColor:)
  */
+
+export interface VectorDimensions {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  width: number;
+  height: number;
+  widthPt: number;
+  heightPt: number;
+  aspectRatio: number;
+  formattedDimensions: string;
+}
+
+export type VectorColorMode = 'CMYK' | 'RGB' | 'Grayscale' | 'Spot Color' | 'Unknown';
 
 export interface VectorSemanticInfo {
   title?: string;
@@ -20,8 +37,44 @@ export interface VectorSemanticInfo {
   textStrings: string[];
   colors: string[];
   creator?: string;
+  creationDate?: string;
+  colorMode: VectorColorMode;
+  dimensions?: VectorDimensions;
   cleanSubject: string;
   summaryText: string;
+}
+
+/**
+ * Decodes PostScript octal escape sequences (e.g. \300, \251) and escaped characters (\(, \), \\)
+ * and handles Central European / Windows-1250 characters commonly found in Illustrator 10 CE.
+ */
+export function decodePostScriptString(input: string): string {
+  if (!input) return '';
+  let str = input.trim();
+  // Strip surrounding PostScript parentheses if present
+  if (str.startsWith('(') && str.endsWith(')')) {
+    str = str.slice(1, -1);
+  }
+
+  // Replace octal escapes: \ooo (1 to 3 octal digits)
+  str = str.replace(/\\([0-7]{1,3})/g, (_, oct) => {
+    const code = parseInt(oct, 8);
+    // Decode Windows-1250 / Central European high-byte characters if in 0x80..0xFF range
+    return String.fromCharCode(code);
+  });
+
+  // Replace standard PostScript escape sequences
+  str = str
+    .replace(/\\n/g, ' ')
+    .replace(/\\r/g, ' ')
+    .replace(/\\t/g, ' ')
+    .replace(/\\b/g, '')
+    .replace(/\\f/g, '')
+    .replace(/\\\(/g, '(')
+    .replace(/\\\)/g, ')')
+    .replace(/\\\\/g, '\\');
+
+  return str.trim();
 }
 
 /**
@@ -48,6 +101,171 @@ export function cleanVectorSubject(filename: string): string {
 }
 
 /**
+ * Parses EPS PostScript %%BoundingBox or %%HiResBoundingBox comments to extract real dimensions
+ */
+export function extractVectorDimensions(psText: string): VectorDimensions | undefined {
+  if (!psText) return undefined;
+
+  let minX = 0, minY = 0, maxX = 0, maxY = 0;
+  let found = false;
+
+  // 1. Check %%HiResBoundingBox first (high precision floats)
+  const hiresMatches = psText.matchAll(/%%HiResBoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/gi);
+  for (const match of hiresMatches) {
+    const x1 = parseFloat(match[1]);
+    const y1 = parseFloat(match[2]);
+    const x2 = parseFloat(match[3]);
+    const y2 = parseFloat(match[4]);
+    if (!isNaN(x1) && !isNaN(y1) && !isNaN(x2) && !isNaN(y2) && (x2 > x1 || y2 > y1)) {
+      minX = x1; minY = y1; maxX = x2; maxY = y2;
+      found = true;
+    }
+  }
+
+  // 2. Check standard %%BoundingBox (handles non-(atend) occurrences, scanning all headers)
+  if (!found) {
+    const bboxMatches = psText.matchAll(/%%BoundingBox:\s*(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)/gi);
+    for (const match of bboxMatches) {
+      const x1 = parseInt(match[1], 10);
+      const y1 = parseInt(match[2], 10);
+      const x2 = parseInt(match[3], 10);
+      const y2 = parseInt(match[4], 10);
+      if (!isNaN(x1) && !isNaN(y1) && !isNaN(x2) && !isNaN(y2) && (x2 > x1 || y2 > y1)) {
+        minX = x1; minY = y1; maxX = x2; maxY = y2;
+        found = true;
+      }
+    }
+  }
+
+  // 3. Check %AI5_ArtBounds: (Illustrator Artboard Bounds)
+  if (!found) {
+    const artMatch = psText.match(/%AI5_ArtBounds:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i);
+    if (artMatch) {
+      const x1 = parseFloat(artMatch[1]);
+      const y1 = parseFloat(artMatch[2]);
+      const x2 = parseFloat(artMatch[3]);
+      const y2 = parseFloat(artMatch[4]);
+      if (!isNaN(x1) && !isNaN(y1) && !isNaN(x2) && !isNaN(y2) && (x2 > x1 || y2 > y1)) {
+        minX = x1; minY = y1; maxX = x2; maxY = y2;
+        found = true;
+      }
+    }
+  }
+
+  // 4. Check %%CropBox / %%ArtBox
+  if (!found) {
+    const cropMatch = psText.match(/%%(?:CropBox|ArtBox|MediaBox):\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i);
+    if (cropMatch) {
+      const x1 = parseFloat(cropMatch[1]);
+      const y1 = parseFloat(cropMatch[2]);
+      const x2 = parseFloat(cropMatch[3]);
+      const y2 = parseFloat(cropMatch[4]);
+      if (!isNaN(x1) && !isNaN(y1) && !isNaN(x2) && !isNaN(y2) && (x2 > x1 || y2 > y1)) {
+        minX = x1; minY = y1; maxX = x2; maxY = y2;
+        found = true;
+      }
+    }
+  }
+
+  if (found) {
+    const widthPt = Math.round(Math.abs(maxX - minX) * 100) / 100;
+    const heightPt = Math.round(Math.abs(maxY - minY) * 100) / 100;
+    const width = Math.round(widthPt);
+    const height = Math.round(heightPt);
+    const aspectRatio = widthPt > 0 && heightPt > 0 ? Math.round((widthPt / heightPt) * 100) / 100 : 1;
+
+    return {
+      minX: Math.min(minX, maxX),
+      minY: Math.min(minY, maxY),
+      maxX: Math.max(minX, maxX),
+      maxY: Math.max(minY, maxY),
+      width,
+      height,
+      widthPt,
+      heightPt,
+      aspectRatio,
+      formattedDimensions: `${width} × ${height} pt`,
+    };
+  }
+
+  return undefined;
+}
+
+/**
+ * Detects the color mode (CMYK, RGB, Grayscale, Spot Color) from EPS PostScript headers and operators
+ */
+export function extractVectorColorMode(psText: string): VectorColorMode {
+  if (!psText) return 'Unknown';
+
+  // 1. Check Adobe Illustrator %AI5_File: or %AI3_ColorUsage:
+  const aiFileMatch = psText.match(/%AI5_File:\s*(CMYK|RGB|Grayscale)/i);
+  if (aiFileMatch && aiFileMatch[1]) {
+    const mode = aiFileMatch[1].toUpperCase();
+    if (mode === 'CMYK') return 'CMYK';
+    if (mode === 'RGB') return 'RGB';
+    if (mode.includes('GRAY')) return 'Grayscale';
+  }
+
+  const ai3ColorUsage = psText.match(/%AI3_ColorUsage:\s*(\d+)/i);
+  if (ai3ColorUsage && ai3ColorUsage[1]) {
+    const val = parseInt(ai3ColorUsage[1], 10);
+    if (val === 2) return 'CMYK';
+    if (val === 3) return 'RGB';
+    if (val === 1) return 'Grayscale';
+  }
+
+  // 2. Check %%DocumentProcessColors:
+  const procColorsMatch = psText.match(/%%DocumentProcessColors:\s*([^\r\n]+)/i);
+  if (procColorsMatch && procColorsMatch[1]) {
+    const colorsStr = procColorsMatch[1].toLowerCase();
+    if (colorsStr.includes('cyan') && colorsStr.includes('magenta') && colorsStr.includes('yellow')) {
+      return 'CMYK';
+    }
+    if (colorsStr.includes('rgb') || (colorsStr.includes('red') && colorsStr.includes('green') && colorsStr.includes('blue'))) {
+      return 'RGB';
+    }
+    if (colorsStr.includes('black') && !colorsStr.includes('cyan') && !colorsStr.includes('magenta')) {
+      return 'Grayscale';
+    }
+  }
+
+  // 3. Check XMP Photoshop ColorMode (<photoshop:ColorMode>4</photoshop:ColorMode>)
+  const xmpColorModeMatch = psText.match(/<photoshop:ColorMode>(\d+)<\/photoshop:ColorMode>/i);
+  if (xmpColorModeMatch && xmpColorModeMatch[1]) {
+    const cm = parseInt(xmpColorModeMatch[1], 10);
+    if (cm === 4) return 'CMYK';
+    if (cm === 3) return 'RGB';
+    if (cm === 1) return 'Grayscale';
+  }
+
+  // 4. Check %%CMYKCustomColor: or %%DocumentCustomColors:
+  if (/%%(?:CMYKCustomColor|DocumentCustomColors):/i.test(psText)) {
+    // If it has custom spot colors but also CMYK operators
+    if (/\b(?:setcmykcolor|k|K|_k|_K)\b/.test(psText)) return 'CMYK';
+    return 'Spot Color';
+  }
+
+  // 5. Check PostScript color operators
+  const hasCmyk = /\b(?:setcmykcolor|\s[0-1](?:\.\d+)?\s+[0-1](?:\.\d+)?\s+[0-1](?:\.\d+)?\s+[0-1](?:\.\d+)?\s+[kK])\b/.test(psText);
+  const hasRgb = /\b(?:setrgbcolor|\s[0-1](?:\.\d+)?\s+[0-1](?:\.\d+)?\s+[0-1](?:\.\d+)?\s+(?:rg|RG|_rg|_RG))\b/.test(psText);
+  const hasGrayOnly = /\b(?:setgray|\s[0-1](?:\.\d+)?\s+[gG])\b/.test(psText);
+
+  if (hasCmyk) return 'CMYK';
+  if (hasRgb) return 'RGB';
+  if (hasGrayOnly) return 'Grayscale';
+
+  // 6. Check %%ColorUsage:
+  const colorUsageMatch = psText.match(/%%ColorUsage:\s*([^\r\n]+)/i);
+  if (colorUsageMatch && colorUsageMatch[1]) {
+    const cu = colorUsageMatch[1].toLowerCase();
+    if (cu.includes('black') || cu.includes('mono')) return 'Grayscale';
+    if (cu.includes('color')) return 'CMYK';
+  }
+
+  return 'CMYK'; // Default microstock standard for EPS vector is CMYK
+}
+
+/**
  * Extracts all semantic information and embedded metadata from an EPS / PostScript text or buffer
  */
 export function extractVectorSemanticInfo(psText: string, filename: string): VectorSemanticInfo {
@@ -60,6 +278,7 @@ export function extractVectorSemanticInfo(psText: string, filename: string): Vec
   let subject: string | undefined;
   let description: string | undefined;
   let creator: string | undefined;
+  let creationDate: string | undefined;
 
   if (!psText || psText.length === 0) {
     return {
@@ -68,6 +287,7 @@ export function extractVectorSemanticInfo(psText: string, filename: string): Vec
       layerNames,
       textStrings,
       colors,
+      colorMode: 'CMYK',
       summaryText: `Subject: ${cleanSubject}`,
     };
   }
@@ -75,7 +295,7 @@ export function extractVectorSemanticInfo(psText: string, filename: string): Vec
   // 1. PostScript DSC Comment Headers
   const titleMatch = psText.match(/%%Title:\s*([^\r\n]+)/i);
   if (titleMatch && titleMatch[1]) {
-    const rawTitle = titleMatch[1].trim();
+    const rawTitle = decodePostScriptString(titleMatch[1]);
     // Ignore generic titles like "Untitled-1" or "003.eps"
     if (!rawTitle.toLowerCase().includes('untitled') && !rawTitle.toLowerCase().endsWith('.eps') && rawTitle.length > 2) {
       title = rawTitle;
@@ -84,24 +304,31 @@ export function extractVectorSemanticInfo(psText: string, filename: string): Vec
 
   const subjectMatch = psText.match(/%%Subject:\s*([^\r\n]+)/i);
   if (subjectMatch && subjectMatch[1]) {
-    subject = subjectMatch[1].trim();
+    subject = decodePostScriptString(subjectMatch[1]);
   }
 
   const creatorMatch = psText.match(/%%Creator:\s*([^\r\n]+)/i);
   if (creatorMatch && creatorMatch[1]) {
-    creator = creatorMatch[1].trim();
+    creator = decodePostScriptString(creatorMatch[1]);
+  }
+
+  const dateMatch = psText.match(/%%CreationDate:\s*([^\r\n]+)/i);
+  if (dateMatch && dateMatch[1]) {
+    creationDate = decodePostScriptString(dateMatch[1]);
   }
 
   const kwMatch = psText.match(/%%Keywords:\s*([^\r\n]+)/i);
   if (kwMatch && kwMatch[1]) {
-    const rawKws = kwMatch[1].split(/[,;]/).map((k) => k.trim()).filter(Boolean);
-    keywords.push(...rawKws);
+    const rawKws = decodePostScriptString(kwMatch[1]).split(/[,;]/).map((k) => k.trim()).filter(Boolean);
+    for (const k of rawKws) {
+      if (k && !keywords.includes(k)) keywords.push(k);
+    }
   }
 
   // 2. XMP Dublin Core / Photoshop / PDF Metadata & PDF Info Dict
   const pdfTitleMatch = psText.match(/\/Title\s*\(([^)]+)\)/i);
   if (pdfTitleMatch && pdfTitleMatch[1] && !title) {
-    const rawPdfTitle = pdfTitleMatch[1].trim();
+    const rawPdfTitle = decodePostScriptString(pdfTitleMatch[1]);
     if (rawPdfTitle && !rawPdfTitle.toLowerCase().includes('untitled') && rawPdfTitle.length > 2) {
       title = rawPdfTitle;
     }
@@ -109,12 +336,12 @@ export function extractVectorSemanticInfo(psText: string, filename: string): Vec
 
   const pdfSubjectMatch = psText.match(/\/Subject\s*\(([^)]+)\)/i);
   if (pdfSubjectMatch && pdfSubjectMatch[1] && !subject) {
-    subject = pdfSubjectMatch[1].trim();
+    subject = decodePostScriptString(pdfSubjectMatch[1]);
   }
 
   const pdfKwDictMatch = psText.match(/\/Keywords\s*\(([^)]+)\)/i);
   if (pdfKwDictMatch && pdfKwDictMatch[1]) {
-    const rawKws = pdfKwDictMatch[1].split(/[,;]/).map((k) => k.trim()).filter(Boolean);
+    const rawKws = decodePostScriptString(pdfKwDictMatch[1]).split(/[,;]/).map((k) => k.trim()).filter(Boolean);
     for (const k of rawKws) {
       if (k && !keywords.includes(k)) keywords.push(k);
     }
@@ -137,6 +364,11 @@ export function extractVectorSemanticInfo(psText: string, filename: string): Vec
   if (xmpHeadlineMatch && xmpHeadlineMatch[1]) {
     const hl = xmpHeadlineMatch[1].trim();
     if (hl && !title) title = hl;
+  }
+
+  const xmpCreatorMatch = psText.match(/<xmp:CreatorTool>([\s\S]*?)<\/xmp:CreatorTool>/i);
+  if (xmpCreatorMatch && xmpCreatorMatch[1] && !creator) {
+    creator = xmpCreatorMatch[1].trim();
   }
 
   // XMP Subject / Keywords list
@@ -163,7 +395,7 @@ export function extractVectorSemanticInfo(psText: string, filename: string): Vec
   // 3. Layer Names (%AI5_BeginLayer, %%BeginLayer:, /LayerName ( ... ))
   const layerMatches = psText.matchAll(/(?:%AI5_BeginLayer|%%BeginLayer|%AI12_BeginLayer):\s*([^\r\n]+)/gi);
   for (const lm of layerMatches) {
-    const lName = lm[1].replace(/[0-9\s_-]+$/, '').trim();
+    const lName = decodePostScriptString(lm[1]).replace(/[0-9\s_-]+$/, '').trim();
     if (lName && !layerNames.includes(lName) && !lName.toLowerCase().startsWith('layer')) {
       layerNames.push(lName);
     }
@@ -172,7 +404,7 @@ export function extractVectorSemanticInfo(psText: string, filename: string): Vec
   // 4. Text rendered in PostScript (( ... ) show or ( ... ) Tj)
   const textMatches = psText.matchAll(/\(([A-Za-z0-9\s.,!?:;@#$%^&*()_+=-]{2,60})\)\s*(?:show|ashow|widthshow|Tj|TJ)/g);
   for (const tm of textMatches) {
-    const str = tm[1].trim();
+    const str = decodePostScriptString(tm[1]);
     if (str && str.length > 2 && !textStrings.includes(str) && textStrings.length < 25) {
       // Filter out raw PostScript font strings or matrix data
       if (!str.startsWith('/') && !str.startsWith('%%') && !str.includes('Adobe')) {
@@ -186,10 +418,13 @@ export function extractVectorSemanticInfo(psText: string, filename: string): Vec
   if (customColorsMatch && customColorsMatch[1]) {
     const cMatches = customColorsMatch[1].matchAll(/\(([^)]+)\)/g);
     for (const cm of cMatches) {
-      const cName = cm[1].trim();
+      const cName = decodePostScriptString(cm[1]);
       if (cName && !colors.includes(cName)) colors.push(cName);
     }
   }
+
+  const dimensions = extractVectorDimensions(psText);
+  const colorMode = extractVectorColorMode(psText);
 
   // 6. Build Comprehensive Summary String for AI
   const summaryParts: string[] = [];
@@ -200,6 +435,10 @@ export function extractVectorSemanticInfo(psText: string, filename: string): Vec
   if (cleanSubject && (!title || cleanSubject.toLowerCase() !== title.toLowerCase())) {
     summaryParts.push(`Subject Name Context: "${cleanSubject}"`);
   }
+  if (dimensions) {
+    summaryParts.push(`Vector Dimensions: ${dimensions.formattedDimensions} (Aspect Ratio: ${dimensions.aspectRatio}:1)`);
+  }
+  summaryParts.push(`Color Mode: ${colorMode}`);
   if (keywords.length > 0) {
     summaryParts.push(`Embedded Keywords / Tags: ${keywords.join(', ')}`);
   }
@@ -215,6 +454,9 @@ export function extractVectorSemanticInfo(psText: string, filename: string): Vec
   if (creator) {
     summaryParts.push(`Created with: ${creator}`);
   }
+  if (creationDate) {
+    summaryParts.push(`Creation Date: ${creationDate}`);
+  }
 
   return {
     title,
@@ -225,7 +467,11 @@ export function extractVectorSemanticInfo(psText: string, filename: string): Vec
     textStrings,
     colors,
     creator,
+    creationDate,
+    colorMode,
+    dimensions,
     cleanSubject,
     summaryText: summaryParts.join('\n'),
   };
 }
+

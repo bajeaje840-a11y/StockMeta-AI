@@ -16,7 +16,7 @@ import {
 } from './types';
 import { DEFAULT_TRADEMARK_BLOCKLIST, mapToAdobeCategory, mapToShutterstockCategory } from './data/platforms';
 import { loadAiConfig, saveAiConfig, isProviderReady, AI_PROVIDERS } from './data/aiModels';
-import { getFormatCategory, prepareFileForAi } from './utils/fileHelpers';
+import { getFormatCategory, prepareFileForAi, generateDeterministicVectorThumbnail } from './utils/fileHelpers';
 import { downloadAllPlatformsZip, downloadCSV, generateCSV } from './utils/csvExporter';
 import { generateGeminiMetadataDirectly, parseApiErrorMessage } from './utils/directAiService';
 
@@ -123,13 +123,28 @@ export default function App() {
         let cleanSubject = file.cleanSubject;
 
         if ((!base64Data || !previewUrl || file.isRealArtworkPreview === undefined) && file.file) {
-          const prep = await prepareFileForAi(file.file);
-          base64Data = prep.base64Data;
-          mimeTypeForAi = prep.mimeTypeForAi;
-          previewUrl = prep.previewUrl;
-          isRealArtworkPreview = prep.isRealArtworkPreview;
-          vectorSemanticText = prep.vectorSemanticText;
-          cleanSubject = prep.cleanSubject;
+          try {
+            const prep = await prepareFileForAi(file.file);
+            base64Data = prep.base64Data;
+            mimeTypeForAi = prep.mimeTypeForAi;
+            previewUrl = prep.previewUrl;
+            isRealArtworkPreview = prep.isRealArtworkPreview;
+            vectorSemanticText = prep.vectorSemanticText;
+            cleanSubject = prep.cleanSubject;
+          } catch (prepErr) {
+            console.warn('Primary file preparation failed, fallback to deterministic vector preview:', prepErr);
+          }
+
+          // Deterministic fallback mechanism: if primary rasterization failed or produced no preview for vector/EPS
+          if (!previewUrl && file.formatCategory === 'vector' && file.file) {
+            try {
+              const fallback = await generateDeterministicVectorThumbnail(file.file);
+              previewUrl = fallback.previewUrl;
+              isRealArtworkPreview = false;
+            } catch (fallbackErr) {
+              console.warn('Deterministic vector preview generation error:', fallbackErr);
+            }
+          }
 
           setFiles((prev) =>
             prev.map((f) =>
@@ -138,7 +153,7 @@ export default function App() {
                     ...f,
                     base64Data,
                     mimeTypeForAi,
-                    previewUrl,
+                    previewUrl: previewUrl || f.previewUrl,
                     isRealArtworkPreview,
                     vectorSemanticText,
                     cleanSubject,
@@ -223,6 +238,9 @@ export default function App() {
               previewUrl = resData.renderedPreviewUrl;
               base64Data = resData.renderedBase64Data;
               isRealArtworkPreview = true;
+            } else if (!previewUrl && file.formatCategory === 'vector' && file.file) {
+              const fallback = await generateDeterministicVectorThumbnail(file.file);
+              previewUrl = fallback.previewUrl;
             }
 
             adobeCat = mapToAdobeCategory(
@@ -272,6 +290,11 @@ export default function App() {
               cat2 = directResult.shutterstockCategory2;
               providerUsed = directResult.providerUsed;
               modelUsed = directResult.modelUsed;
+
+              if (!previewUrl && file.formatCategory === 'vector' && file.file) {
+                const fallback = await generateDeterministicVectorThumbnail(file.file);
+                previewUrl = fallback.previewUrl;
+              }
             } catch (directErr: any) {
               throw new Error(parseApiErrorMessage(creds.provider, directErr || serverErr));
             }
@@ -282,6 +305,16 @@ export default function App() {
 
         if (!meta) {
           throw new Error('Failed to generate metadata from AI provider.');
+        }
+
+        // Final preview check for vector files to ensure no EPS remains without preview
+        if (!previewUrl && file.formatCategory === 'vector' && file.file) {
+          try {
+            const fallback = await generateDeterministicVectorThumbnail(file.file);
+            previewUrl = fallback.previewUrl;
+          } catch (e) {
+            // Ignore
+          }
         }
 
         // 3. Update file with generated AI metadata
@@ -309,9 +342,19 @@ export default function App() {
           )
         );
       } catch (err: any) {
+        // Even if generation fails, ensure vector preview is available
+        if (!file.previewUrl && file.formatCategory === 'vector' && file.file) {
+          try {
+            const fallback = await generateDeterministicVectorThumbnail(file.file);
+            file.previewUrl = fallback.previewUrl;
+          } catch (e) {
+            // Ignore
+          }
+        }
+
         if (err.name === 'AbortError') {
           setFiles((prev) =>
-            prev.map((f) => (f.id === file.id ? { ...f, status: 'cancelled' } : f))
+            prev.map((f) => (f.id === file.id ? { ...f, previewUrl: file.previewUrl || f.previewUrl, status: 'cancelled' } : f))
           );
         } else {
           setFiles((prev) =>
@@ -319,6 +362,7 @@ export default function App() {
               f.id === file.id
                 ? {
                     ...f,
+                    previewUrl: file.previewUrl || f.previewUrl,
                     status: 'failed',
                     errorMessage: err?.message || 'Failed to generate metadata',
                   }
@@ -431,12 +475,17 @@ export default function App() {
           try {
             if (item.file) {
               const prep = await prepareFileForAi(item.file);
+              let previewUrl = prep.previewUrl;
+              if (!previewUrl && item.formatCategory === 'vector') {
+                const fallback = await generateDeterministicVectorThumbnail(item.file);
+                previewUrl = fallback.previewUrl;
+              }
               setFiles((prev) =>
                 prev.map((f) =>
                   f.id === item.id
                     ? {
                         ...f,
-                        previewUrl: prep.previewUrl || f.previewUrl,
+                        previewUrl: previewUrl || f.previewUrl,
                         base64Data: prep.base64Data || f.base64Data,
                         mimeTypeForAi: prep.mimeTypeForAi || f.mimeTypeForAi,
                         isRealArtworkPreview: prep.isRealArtworkPreview,
@@ -449,6 +498,18 @@ export default function App() {
             }
           } catch (e) {
             console.warn('Background preview preloading failed:', e);
+            if (item.file && item.formatCategory === 'vector') {
+              try {
+                const fallback = await generateDeterministicVectorThumbnail(item.file);
+                setFiles((prev) =>
+                  prev.map((f) =>
+                    f.id === item.id ? { ...f, previewUrl: fallback.previewUrl } : f
+                  )
+                );
+              } catch (fallbackErr) {
+                // Ignore
+              }
+            }
           }
         }
       }
