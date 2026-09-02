@@ -672,7 +672,7 @@ export default function App() {
   const selectedFile = selectedFileIndex !== -1 ? files[selectedFileIndex] : null;
 
   return (
-    <div className="min-h-screen bg-gray-100/70 dark:bg-gray-950 text-gray-900 dark:text-gray-100 flex flex-col font-sans transition-colors selection:bg-indigo-500 selection:text-white">
+    <div className="min-h-screen bg-zinc-50 dark:bg-[#09090b] text-zinc-900 dark:text-zinc-100 flex flex-col font-sans transition-colors selection:bg-zinc-800 selection:text-white dark:selection:bg-zinc-200 dark:selection:text-zinc-900">
       {/* Top Navbar */}
       <Navbar
         stats={stats}
@@ -689,7 +689,7 @@ export default function App() {
       />
 
       {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
         {/* Upload Zone */}
         <UploadZone
           onFilesAdded={handleFilesAdded}

@@ -116,39 +116,33 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className={`relative overflow-hidden rounded-2xl border transition-all duration-200 p-8 sm:p-10 text-center cursor-pointer ${
+        className={`relative overflow-hidden rounded-xl border transition-all duration-200 p-8 sm:p-10 text-center cursor-pointer ${
           isDragging
-            ? 'border-indigo-500 bg-indigo-50/80 dark:bg-indigo-950/40 shadow-xl ring-4 ring-indigo-500/10 scale-[1.005]'
-            : 'border-slate-200 dark:border-slate-800/90 bg-white/70 dark:bg-slate-900/60 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-white dark:hover:bg-slate-900 shadow-xs'
+            ? 'border-zinc-400 dark:border-zinc-400 bg-zinc-100 dark:bg-zinc-900 ring-2 ring-zinc-500/20'
+            : 'border-zinc-200 dark:border-white/[0.08] bg-white dark:bg-[#121215] hover:border-zinc-300 dark:hover:border-white/[0.14]'
         }`}
       >
-        {/* Subtle Ambient Radial Lighting */}
-        <div className="absolute inset-0 bg-radial-[at_50%_0%] from-indigo-500/5 via-transparent to-transparent pointer-events-none" />
-
-        <div className="relative z-10 max-w-2xl mx-auto flex flex-col items-center">
-          {/* Main Icon Capsule */}
-          <div className="relative mb-5 group">
-            <div className={`h-16 w-16 rounded-2xl flex items-center justify-center transition-all duration-200 ${
+        <div className="relative z-10 max-w-xl mx-auto flex flex-col items-center">
+          {/* Main Icon Box */}
+          <div className="mb-4">
+            <div className={`h-12 w-12 rounded-xl flex items-center justify-center transition-all duration-200 ${
               isDragging
-                ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30 scale-110'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200/80 dark:border-slate-700/80 group-hover:border-indigo-300 dark:group-hover:border-indigo-700/60 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 group-hover:scale-105'
+                ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-950 scale-105'
+                : 'bg-zinc-100 dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-white/[0.08]'
             }`}>
-              <Upload className={`w-7 h-7 stroke-[2.2] ${isDragging ? 'animate-bounce' : ''}`} />
-            </div>
-            <div className="absolute -top-1 -right-1 p-1 rounded-full bg-indigo-600 text-white shadow-xs">
-              <Sparkles className="w-3 h-3" />
+              <Upload className={`w-5 h-5 stroke-[2] ${isDragging ? 'animate-bounce' : ''}`} />
             </div>
           </div>
 
-          <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white mb-2">
-            {isDragging ? 'Release to queue files' : 'Drop your stock media or browse'}
+          <h2 className="text-lg sm:text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100 mb-1.5">
+            {isDragging ? 'Drop media files to queue' : 'Drag & drop stock media or browse'}
           </h2>
-          <p className="text-sm font-normal text-slate-500 dark:text-slate-400 mb-6 max-w-lg leading-relaxed">
-            Batch process photos, legacy EPS/AI vectors, videos, and PDFs with AI metadata generation tuned for major microstock agencies.
+          <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-6 max-w-md leading-relaxed">
+            Automatic PostScript rasterization for EPS/AI vectors, high-res photo indexing, and SEO tagging.
           </p>
 
           {/* Action Buttons */}
-          <div className="flex flex-wrap items-center justify-center gap-3 mb-7">
+          <div className="flex flex-wrap items-center justify-center gap-2.5 mb-6">
             {/* Select Files Button */}
             <button
               id="select-files-btn"
@@ -157,10 +151,10 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
                 e.stopPropagation();
                 fileInputRef.current?.click();
               }}
-              className="inline-flex items-center space-x-2 px-5 py-2.5 rounded-xl font-semibold text-sm text-white bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 shadow-sm shadow-indigo-600/25 transition-all duration-150 active:scale-[0.98]"
+              className="inline-flex items-center space-x-2 px-4 py-2 rounded-lg font-medium text-xs text-white bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white transition-all duration-150 active:scale-[0.98] shadow-xs cursor-pointer"
             >
-              <FilePlus className="w-4 h-4 stroke-[2.2]" />
-              <span>Choose Media Files</span>
+              <FilePlus className="w-3.5 h-3.5 stroke-[2]" />
+              <span>Choose Files</span>
             </button>
 
             {/* Select Folder Button */}
@@ -171,10 +165,10 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
                 e.stopPropagation();
                 folderInputRef.current?.click();
               }}
-              className="inline-flex items-center space-x-2 px-5 py-2.5 rounded-xl font-semibold text-sm text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-750 border border-slate-200 dark:border-slate-700 shadow-2xs transition-all duration-150 active:scale-[0.98]"
+              className="inline-flex items-center space-x-2 px-4 py-2 rounded-lg font-medium text-xs text-zinc-700 dark:text-zinc-300 bg-zinc-100 hover:bg-zinc-200/80 dark:bg-zinc-900 dark:hover:bg-zinc-850 border border-zinc-200/80 dark:border-white/[0.08] transition-all duration-150 active:scale-[0.98] cursor-pointer"
             >
-              <FolderPlus className="w-4 h-4 text-indigo-500 stroke-[2.2]" />
-              <span>Import Entire Folder</span>
+              <FolderPlus className="w-3.5 h-3.5 stroke-[2]" />
+              <span>Import Folder</span>
             </button>
 
             {/* Hidden File Inputs */}
@@ -199,20 +193,20 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
             />
           </div>
 
-          {/* Supported Format Visual Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 w-full max-w-xl">
+          {/* Supported Format Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 w-full max-w-lg">
             {formatCategories.map((item, idx) => {
               const Icon = item.icon;
               return (
                 <div
                   key={idx}
-                  className="flex flex-col items-start px-3 py-2 rounded-xl bg-slate-50/80 dark:bg-slate-950/40 border border-slate-200/60 dark:border-slate-800/80 text-left"
+                  className="flex flex-col items-start px-2.5 py-2 rounded-lg bg-zinc-50/60 dark:bg-zinc-900/60 border border-zinc-200/60 dark:border-white/[0.05] text-left"
                 >
                   <div className="flex items-center space-x-1.5 mb-0.5">
-                    <Icon className="w-3.5 h-3.5 text-indigo-500" />
-                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200">{item.label}</span>
+                    <Icon className="w-3 h-3 text-zinc-400 dark:text-zinc-500" />
+                    <span className="text-[11px] font-medium text-zinc-800 dark:text-zinc-200">{item.label}</span>
                   </div>
-                  <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400 truncate w-full">
+                  <span className="text-[9.5px] font-mono text-zinc-400 dark:text-zinc-500 truncate w-full">
                     {item.ext}
                   </span>
                 </div>
@@ -220,10 +214,9 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
             })}
           </div>
 
-          {/* Micro Guarantee Note */}
-          <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-4 flex items-center space-x-1.5">
+          <p className="text-[10.5px] text-zinc-400 dark:text-zinc-500 mt-4 flex items-center space-x-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
-            <span>PostScript vector renderer, video keyframe extractor & trademark sanitizer included</span>
+            <span>PostScript vector engine, video frame extraction, and CSV sanitization active</span>
           </p>
         </div>
       </div>

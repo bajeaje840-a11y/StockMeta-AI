@@ -11,12 +11,9 @@ import {
   FileImage,
   Video,
   FileText,
-  FileCode,
   Tag,
   AlertTriangle,
   Layers,
-  Sparkles,
-  Check,
 } from 'lucide-react';
 import { StockFile } from '../types';
 import { bytesToSize } from '../utils/fileHelpers';
@@ -65,25 +62,25 @@ export const QueueTable: React.FC<QueueTableProps> = ({
     switch (file.formatCategory) {
       case 'video':
         return (
-          <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/60 font-mono">
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9.5px] font-mono font-medium bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
             <Video className="w-2.5 h-2.5 mr-1" /> VIDEO
           </span>
         );
       case 'vector':
         return (
-          <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60 font-mono">
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9.5px] font-mono font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
             <Layers className="w-2.5 h-2.5 mr-1" /> VECTOR
           </span>
         );
       case 'pdf':
         return (
-          <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800/60 font-mono">
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9.5px] font-mono font-medium bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
             <FileText className="w-2.5 h-2.5 mr-1" /> PDF
           </span>
         );
       default:
         return (
-          <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800/60 font-mono">
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9.5px] font-mono font-medium bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-white/[0.08]">
             <FileImage className="w-2.5 h-2.5 mr-1" /> IMAGE
           </span>
         );
@@ -94,35 +91,35 @@ export const QueueTable: React.FC<QueueTableProps> = ({
     switch (status) {
       case 'queued':
         return (
-          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700">
-            <Clock className="w-3 h-3 mr-1 text-slate-400" /> Queued
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-medium bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-white/[0.08]">
+            <Clock className="w-3 h-3 mr-1 text-zinc-400" /> Queued
           </span>
         );
       case 'processing':
         return (
-          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/60 shadow-2xs">
-            <Loader2 className="w-3 h-3 mr-1 animate-spin text-indigo-500" /> Generating...
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-medium bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20">
+            <Loader2 className="w-3 h-3 mr-1 animate-spin" /> Processing
           </span>
         );
       case 'success':
         return (
-          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60 shadow-2xs">
-            <CheckCircle2 className="w-3 h-3 mr-1 text-emerald-500" /> Ready
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+            <CheckCircle2 className="w-3 h-3 mr-1" /> Ready
           </span>
         );
       case 'failed':
         return (
           <span
-            className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800/60 cursor-help"
+            className="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-medium bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 cursor-help"
             title={errorMsg || 'Failed to generate metadata'}
           >
-            <AlertCircle className="w-3 h-3 mr-1 text-rose-500" /> Error
+            <AlertCircle className="w-3 h-3 mr-1" /> Failed
           </span>
         );
       case 'cancelled':
         return (
-          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-medium bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60">
-            <XCircle className="w-3 h-3 mr-1 text-amber-500" /> Paused
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-medium bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 border border-zinc-200 dark:border-white/[0.08]">
+            <XCircle className="w-3 h-3 mr-1" /> Paused
           </span>
         );
     }
@@ -130,50 +127,50 @@ export const QueueTable: React.FC<QueueTableProps> = ({
 
   if (files.length === 0) {
     return (
-      <div className="w-full bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-12 text-center text-slate-400">
-        <div className="w-12 h-12 mx-auto mb-3 rounded-2xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200/50 dark:border-indigo-800/50 flex items-center justify-center text-indigo-500">
-          <FileImage className="w-6 h-6 stroke-[1.8]" />
+      <div className="w-full bg-white dark:bg-[#121215] border border-zinc-200 dark:border-white/[0.08] rounded-xl p-10 text-center text-zinc-400">
+        <div className="w-10 h-10 mx-auto mb-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800/80 border border-zinc-200 dark:border-white/[0.06] flex items-center justify-center text-zinc-500">
+          <FileImage className="w-5 h-5" />
         </div>
-        <p className="text-sm font-bold text-slate-800 dark:text-slate-200">No media in queue</p>
-        <p className="text-xs text-slate-500 mt-1">Upload stock photos, EPS vectors, or videos to start generating metadata.</p>
+        <p className="text-xs font-semibold text-zinc-800 dark:text-zinc-200">No media in queue</p>
+        <p className="text-[11px] text-zinc-500 mt-0.5">Upload stock photos, EPS vectors, or videos to start generating metadata.</p>
       </div>
     );
   }
 
   return (
-    <div className="w-full bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl shadow-xs overflow-hidden transition-all">
+    <div className="w-full bg-white dark:bg-[#121215] border border-zinc-200 dark:border-white/[0.08] rounded-xl shadow-xs overflow-hidden transition-all">
       {/* Bulk Selection Bar */}
       {selectedIds.size > 0 && (
-        <div className="bg-indigo-50/90 dark:bg-indigo-950/80 border-b border-indigo-200/80 dark:border-indigo-800/80 px-5 py-2.5 flex items-center justify-between animate-fade-in">
+        <div className="bg-zinc-100 dark:bg-zinc-900 border-b border-zinc-200 dark:border-white/[0.08] px-4 py-2 flex items-center justify-between animate-fade-in">
           <div className="flex items-center space-x-2">
-            <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-indigo-600 text-white text-[11px] font-bold">
+            <span className="inline-flex items-center justify-center w-4 h-4 rounded bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-950 text-[10px] font-mono font-bold">
               {selectedIds.size}
             </span>
-            <span className="text-xs font-semibold text-indigo-950 dark:text-indigo-200">
-              file{selectedIds.size > 1 ? 's' : ''} selected
+            <span className="text-xs text-zinc-700 dark:text-zinc-300 font-medium">
+              selected
             </span>
           </div>
 
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-1.5">
             <button
               onClick={() => {
                 onBulkRetry(Array.from(selectedIds));
                 setSelectedIds(new Set());
               }}
-              className="inline-flex items-center space-x-1 px-3 py-1.5 rounded-xl text-xs font-semibold bg-white dark:bg-slate-800 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-700/80 shadow-2xs hover:bg-indigo-50/50 transition-all duration-150 active:scale-[0.98]"
+              className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-md text-xs font-medium bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 border border-zinc-200 dark:border-white/[0.08] hover:bg-zinc-50 dark:hover:bg-zinc-750 transition-all cursor-pointer"
             >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>Retry Selected</span>
+              <RotateCcw className="w-3 h-3" />
+              <span>Retry</span>
             </button>
             <button
               onClick={() => {
                 onBulkDelete(Array.from(selectedIds));
                 setSelectedIds(new Set());
               }}
-              className="inline-flex items-center space-x-1 px-3 py-1.5 rounded-xl text-xs font-semibold bg-rose-600 text-white shadow-2xs hover:bg-rose-500 transition-all duration-150 active:scale-[0.98]"
+              className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-md text-xs font-medium bg-rose-600 text-white hover:bg-rose-500 transition-all cursor-pointer"
             >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Delete Selected</span>
+              <Trash2 className="w-3 h-3" />
+              <span>Delete</span>
             </button>
           </div>
         </div>
@@ -183,24 +180,24 @@ export const QueueTable: React.FC<QueueTableProps> = ({
       <div className="overflow-x-auto">
         <table className="w-full text-left border-collapse">
           <thead>
-            <tr className="bg-slate-50/90 dark:bg-slate-950/70 border-b border-slate-200/80 dark:border-slate-800 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 select-none">
-              <th className="py-3 px-4 w-10 text-center">
+            <tr className="bg-zinc-50/80 dark:bg-zinc-900/50 border-b border-zinc-200/80 dark:border-white/[0.06] text-[10.5px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 select-none">
+              <th className="py-2.5 px-3.5 w-10 text-center">
                 <input
                   type="checkbox"
                   checked={isAllSelected}
                   onChange={handleSelectAll}
-                  className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                  className="rounded border-zinc-300 dark:border-zinc-700 text-zinc-900 focus:ring-zinc-500 cursor-pointer"
                 />
               </th>
-              <th className="py-3 px-3 w-16">Preview</th>
-              <th className="py-3 px-4 min-w-[200px]">Asset & Type</th>
-              <th className="py-3 px-4 min-w-[130px]">Status</th>
-              <th className="py-3 px-4 min-w-[300px]">SEO Title</th>
-              <th className="py-3 px-4 min-w-[120px]">Keywords</th>
-              <th className="py-3 px-4 w-28 text-right">Actions</th>
+              <th className="py-2.5 px-2.5 w-14">Preview</th>
+              <th className="py-2.5 px-3.5 min-w-[180px]">File & Type</th>
+              <th className="py-2.5 px-3.5 min-w-[120px]">Status</th>
+              <th className="py-2.5 px-3.5 min-w-[280px]">Generated SEO Title</th>
+              <th className="py-2.5 px-3.5 min-w-[100px]">Tags</th>
+              <th className="py-2.5 px-3.5 w-24 text-right">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 text-xs">
+          <tbody className="divide-y divide-zinc-100 dark:divide-white/[0.04] text-xs">
             {files.map((file) => {
               const isSelected = selectedIds.has(file.id);
               const titleCommas = file.title.includes(',');
@@ -210,23 +207,23 @@ export const QueueTable: React.FC<QueueTableProps> = ({
                 <tr
                   key={file.id}
                   onClick={() => onSelectRow(file.id)}
-                  className={`group transition-colors duration-100 hover:bg-slate-50/80 dark:hover:bg-slate-800/40 cursor-pointer ${
-                    isSelected ? 'bg-indigo-50/50 dark:bg-indigo-950/25' : ''
+                  className={`group transition-colors duration-100 hover:bg-zinc-50 dark:hover:bg-zinc-900/40 cursor-pointer ${
+                    isSelected ? 'bg-zinc-100/60 dark:bg-zinc-900/60' : ''
                   }`}
                 >
                   {/* Checkbox */}
-                  <td className="py-3.5 px-4 text-center" onClick={(e) => toggleSelectRow(file.id, e)}>
+                  <td className="py-3 px-3.5 text-center" onClick={(e) => toggleSelectRow(file.id, e)}>
                     <input
                       type="checkbox"
                       checked={isSelected}
                       readOnly
-                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                      className="rounded border-zinc-300 dark:border-zinc-700 text-zinc-900 focus:ring-zinc-500 cursor-pointer"
                     />
                   </td>
 
                   {/* Thumbnail Preview */}
-                  <td className="py-3.5 px-3">
-                    <div className="w-12 h-12 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700/80 overflow-hidden flex items-center justify-center relative shadow-2xs group-hover:border-slate-300 dark:group-hover:border-slate-600 transition-all">
+                  <td className="py-3 px-2.5">
+                    <div className="w-10 h-10 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-white/[0.08] overflow-hidden flex items-center justify-center relative shadow-2xs">
                       {file.previewUrl ? (
                         <img
                           src={file.previewUrl}
@@ -235,45 +232,45 @@ export const QueueTable: React.FC<QueueTableProps> = ({
                           loading="lazy"
                         />
                       ) : (
-                        <FileImage className="w-5 h-5 text-slate-400" />
+                        <FileImage className="w-4 h-4 text-zinc-400" />
                       )}
                     </div>
                   </td>
 
                   {/* Asset Name & Format */}
-                  <td className="py-3.5 px-4">
-                    <div className="font-semibold text-slate-900 dark:text-white truncate max-w-[210px]" title={file.name}>
+                  <td className="py-3 px-3.5">
+                    <div className="font-medium text-zinc-900 dark:text-zinc-100 truncate max-w-[200px]" title={file.name}>
                       {file.name}
                     </div>
-                    <div className="flex items-center space-x-2 mt-1">
+                    <div className="flex items-center space-x-1.5 mt-0.5">
                       {renderFormatBadge(file)}
-                      <span className="text-[11px] font-mono text-slate-400 dark:text-slate-500">{bytesToSize(file.size)}</span>
+                      <span className="text-[10px] font-mono text-zinc-400">{bytesToSize(file.size)}</span>
                     </div>
                   </td>
 
                   {/* Status Pill */}
-                  <td className="py-3.5 px-4">
+                  <td className="py-3 px-3.5">
                     {renderStatusPill(file.status, file.errorMessage)}
                     {file.errorMessage && (
-                      <div className="text-[10px] font-medium text-rose-500 truncate max-w-[150px] mt-1" title={file.errorMessage}>
+                      <div className="text-[9.5px] text-rose-500 truncate max-w-[140px] mt-0.5 font-mono" title={file.errorMessage}>
                         {file.errorMessage}
                       </div>
                     )}
                   </td>
 
                   {/* SEO Title Preview */}
-                  <td className="py-3.5 px-4">
+                  <td className="py-3 px-3.5">
                     {file.title ? (
-                      <div className="space-y-1">
-                        <div className="font-medium text-slate-800 dark:text-slate-200 line-clamp-2 leading-relaxed">
+                      <div className="space-y-0.5">
+                        <div className="font-normal text-zinc-800 dark:text-zinc-200 line-clamp-2 leading-relaxed">
                           {file.title}
                         </div>
                         <div className="flex items-center space-x-2">
                           <span
-                            className={`text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded-md ${
+                            className={`text-[9.5px] font-mono px-1 rounded ${
                               titleLengthExceeded
-                                ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
-                                : 'text-slate-400 dark:text-slate-500'
+                                ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 font-semibold'
+                                : 'text-zinc-400'
                             }`}
                           >
                             {file.title.length}/70 chars
@@ -281,41 +278,41 @@ export const QueueTable: React.FC<QueueTableProps> = ({
 
                           {titleCommas && (
                             <span
-                              className="text-[10px] font-medium text-rose-500 flex items-center"
-                              title="Title has commas (Adobe Stock strictly forbids commas in titles)"
+                              className="text-[9.5px] text-rose-500 flex items-center"
+                              title="Title has commas (Adobe Stock forbids commas in titles)"
                             >
-                              <AlertTriangle className="w-3 h-3 mr-0.5 inline" /> Has commas
+                              <AlertTriangle className="w-2.5 h-2.5 mr-0.5 inline" /> Has commas
                             </span>
                           )}
                         </div>
                       </div>
                     ) : (
-                      <span className="text-slate-400 dark:text-slate-500 italic text-[11px]">
-                        {file.status === 'processing' ? 'Generating AI metadata...' : 'Pending processing'}
+                      <span className="text-zinc-400 dark:text-zinc-500 italic text-[11px]">
+                        {file.status === 'processing' ? 'Generating metadata...' : 'Pending processing'}
                       </span>
                     )}
                   </td>
 
                   {/* Keywords Tag Counter */}
-                  <td className="py-3.5 px-4">
+                  <td className="py-3 px-3.5">
                     {file.keywords && file.keywords.length > 0 ? (
-                      <div className="inline-flex items-center px-2 py-1 rounded-lg bg-slate-100/90 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 font-semibold border border-slate-200/80 dark:border-slate-700/80">
-                        <Tag className="w-3 h-3 mr-1 text-indigo-500" />
-                        <span className="font-mono text-[11px]">{file.keywords.length} tags</span>
+                      <div className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-850 text-zinc-700 dark:text-zinc-300 font-medium border border-zinc-200 dark:border-white/[0.06]">
+                        <Tag className="w-2.5 h-2.5 mr-1 text-zinc-400" />
+                        <span className="font-mono text-[10.5px]">{file.keywords.length}</span>
                       </div>
                     ) : (
-                      <span className="text-slate-400 dark:text-slate-500 text-[11px]">—</span>
+                      <span className="text-zinc-400 text-[11px]">—</span>
                     )}
                   </td>
 
                   {/* Action Icons */}
-                  <td className="py-3.5 px-4 text-right" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center justify-end space-x-1">
+                  <td className="py-3 px-3.5 text-right" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center justify-end space-x-0.5">
                       {/* Edit Button */}
                       <button
                         onClick={() => onSelectRow(file.id)}
-                        className="p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
-                        title="Edit metadata in drawer"
+                        className="p-1 rounded text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+                        title="Edit metadata"
                       >
                         <Edit3 className="w-3.5 h-3.5" />
                       </button>
@@ -323,8 +320,8 @@ export const QueueTable: React.FC<QueueTableProps> = ({
                       {/* Single Row Regenerate / Retry */}
                       <button
                         onClick={() => onRegenerateRow(file.id)}
-                        className="p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-amber-50 dark:hover:bg-amber-950/50 hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
-                        title="Regenerate metadata with AI"
+                        className="p-1 rounded text-zinc-400 hover:text-amber-500 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+                        title="Regenerate metadata"
                       >
                         <RotateCcw className="w-3.5 h-3.5" />
                       </button>
@@ -332,8 +329,8 @@ export const QueueTable: React.FC<QueueTableProps> = ({
                       {/* Delete Row */}
                       <button
                         onClick={() => onDeleteRow(file.id)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors"
-                        title="Remove file from batch"
+                        className="p-1 rounded text-zinc-400 hover:text-rose-500 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+                        title="Remove file"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>

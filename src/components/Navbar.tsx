@@ -67,83 +67,73 @@ export const Navbar: React.FC<NavbarProps> = ({
   const getProviderIcon = (provider: AiProvider) => {
     switch (provider) {
       case 'gemini':
-        return <Sparkles className="w-3.5 h-3.5 text-indigo-500" />;
+        return <Sparkles className="w-3.5 h-3.5 text-zinc-100 dark:text-zinc-200" />;
       case 'openai':
-        return <Bot className="w-3.5 h-3.5 text-emerald-500" />;
+        return <Bot className="w-3.5 h-3.5 text-emerald-400" />;
       case 'claude':
-        return <Cpu className="w-3.5 h-3.5 text-amber-500" />;
+        return <Cpu className="w-3.5 h-3.5 text-amber-400" />;
       case 'deepseek':
-        return <Zap className="w-3.5 h-3.5 text-cyan-500" />;
+        return <Zap className="w-3.5 h-3.5 text-sky-400" />;
       case 'custom':
-        return <Globe className="w-3.5 h-3.5 text-purple-500" />;
+        return <Globe className="w-3.5 h-3.5 text-zinc-300" />;
     }
   };
 
   return (
-    <header className="sticky top-0 z-30 border-b border-slate-200/80 dark:border-slate-800/80 bg-white/90 dark:bg-slate-950/90 backdrop-blur-xl transition-all">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+    <header className="sticky top-0 z-30 border-b border-zinc-200/80 dark:border-white/[0.08] bg-white/80 dark:bg-[#09090b]/80 backdrop-blur-md transition-colors">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between">
         {/* Left Branding */}
-        <div className="flex items-center space-x-3.5">
-          <div className="relative group">
-            <div className="h-10 w-10 rounded-xl bg-slate-900 dark:bg-indigo-950 border border-slate-700/50 dark:border-indigo-500/30 flex items-center justify-center text-indigo-400 shadow-sm shadow-indigo-500/10 transition-transform group-hover:scale-105 duration-200">
-              <Layers className="w-5 h-5 text-indigo-500 dark:text-indigo-400" />
-            </div>
-            <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-slate-950" />
+        <div className="flex items-center space-x-3">
+          <div className="h-8 w-8 rounded-lg bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 flex items-center justify-center font-semibold shadow-xs">
+            <Layers className="w-4 h-4 stroke-[2.2]" />
           </div>
 
-          <div>
-            <div className="flex items-center space-x-2.5">
-              <span className="text-[17px] font-extrabold tracking-tight text-slate-900 dark:text-white">
-                StockMeta <span className="text-indigo-600 dark:text-indigo-400">AI</span>
-              </span>
-              <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide uppercase bg-indigo-50 dark:bg-indigo-950/70 text-indigo-600 dark:text-indigo-400 border border-indigo-200/60 dark:border-indigo-800/60">
-                PRO STUDIO
-              </span>
-            </div>
-            <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 hidden sm:block">
-              Intelligent SEO & Multi-Platform Stock Metadata
-            </p>
+          <div className="flex items-center space-x-2.5">
+            <span className="text-[15px] font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
+              StockMeta <span className="text-zinc-500 dark:text-zinc-400 font-normal">AI</span>
+            </span>
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium tracking-wide uppercase bg-zinc-100 dark:bg-zinc-800/80 text-zinc-600 dark:text-zinc-400 border border-zinc-200/60 dark:border-white/[0.06] font-mono">
+              STUDIO
+            </span>
           </div>
         </div>
 
         {/* Right Action Tools */}
-        <div className="flex items-center space-x-2 sm:space-x-2.5">
+        <div className="flex items-center space-x-2">
           {/* AI Model & Key Selection Button */}
           <button
             id="ai-settings-btn"
             onClick={onOpenAiSettings}
-            className={`group flex items-center space-x-2.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold border transition-all duration-150 active:scale-[0.98] ${
+            className={`flex items-center space-x-2 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all duration-150 active:scale-[0.98] ${
               providerReady
-                ? 'bg-slate-50 hover:bg-slate-100/90 dark:bg-slate-900 dark:hover:bg-slate-800/90 border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 shadow-sm'
-                : 'bg-amber-500/10 border-amber-500/40 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20 shadow-sm shadow-amber-500/10'
+                ? 'bg-zinc-100/80 hover:bg-zinc-100 dark:bg-zinc-900/80 dark:hover:bg-zinc-850 border-zinc-200 dark:border-white/[0.08] text-zinc-800 dark:text-zinc-200'
+                : 'bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20'
             }`}
-            title="Configure AI Engine API Keys & Models (Gemini, ChatGPT, Claude, DeepSeek)"
+            title="Configure AI Engine API Keys & Models"
           >
             <div className="flex items-center space-x-1.5">
-              <div className="p-1 rounded-lg bg-white dark:bg-slate-800 shadow-xs border border-slate-200/60 dark:border-slate-700/60">
-                {getProviderIcon(aiConfig.activeProvider || 'gemini')}
-              </div>
-              <span className="font-bold tracking-tight text-slate-900 dark:text-slate-100">{activeMeta.shortName}</span>
+              {getProviderIcon(aiConfig.activeProvider || 'gemini')}
+              <span className="font-semibold tracking-tight">{activeMeta.shortName}</span>
             </div>
 
-            <div className="hidden md:flex items-center space-x-1 text-[11px] text-slate-400 dark:text-slate-500 border-l border-slate-200 dark:border-slate-800 pl-2.5">
-              <Key className="w-3 h-3" />
-              <span className={`font-medium ${providerReady ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
-                {providerReady ? 'Ready' : 'API Key Req.'}
+            <div className="hidden sm:flex items-center space-x-1 text-[11px] text-zinc-400 dark:text-zinc-500 border-l border-zinc-200 dark:border-white/[0.08] pl-2">
+              <span className={`w-1.5 h-1.5 rounded-full ${providerReady ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+              <span className="font-mono text-[10px]">
+                {providerReady ? 'READY' : 'KEY REQ'}
               </span>
             </div>
 
-            <ChevronDown className="w-3 h-3 text-slate-400 transition-transform group-hover:translate-y-0.5" />
+            <ChevronDown className="w-3 h-3 text-zinc-400" />
           </button>
 
-          {/* API Key Rotation Status Badge (when Gemini is active) */}
+          {/* API Key Rotation Status Badge */}
           {aiConfig.activeProvider === 'gemini' && keyStatus && keyStatus.totalKeys > 1 && (
             <div
-              className="hidden xl:flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl text-[11px] font-semibold bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60 shadow-2xs"
-              title="Multi-Key Rotation Pool Active: Automatically rotates on 429 rate limit"
+              className="hidden xl:flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium bg-zinc-100 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-white/[0.08]"
+              title="Multi-Key Rotation Pool Active"
             >
               <RefreshCw className="w-3 h-3 text-emerald-500 animate-spin-slow" />
-              <span>Pool #{keyStatus.currentActiveIndex + 1}/{keyStatus.totalKeys}</span>
+              <span className="font-mono text-[10px]">Pool #{keyStatus.currentActiveIndex + 1}/{keyStatus.totalKeys}</span>
             </div>
           )}
 
@@ -151,17 +141,17 @@ export const Navbar: React.FC<NavbarProps> = ({
           <button
             id="blocklist-btn"
             onClick={onOpenBlocklist}
-            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all duration-150 active:scale-[0.98] border ${
+            className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all duration-150 active:scale-[0.98] border ${
               exportSettings.applyBlocklist
-                ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-200/80 dark:border-amber-800/60 hover:bg-amber-100/70 dark:hover:bg-amber-900/50'
-                : 'bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800'
+                ? 'bg-zinc-100 hover:bg-zinc-150 dark:bg-zinc-900 dark:hover:bg-zinc-850 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-white/[0.08]'
+                : 'bg-transparent text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 border-transparent'
             }`}
-            title="Manage Trademark & Brand Keyword Blocklist"
+            title="Trademark & Brand Keyword Blocklist"
           >
-            <ShieldAlert className="w-3.5 h-3.5 text-amber-500" />
-            <span className="hidden md:inline font-medium">Trademark Filter</span>
+            <ShieldAlert className="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-400" />
+            <span className="hidden md:inline">Sanitizer</span>
             {exportSettings.customBlocklist.length > 0 && (
-              <span className="ml-0.5 px-1.5 py-0.5 text-[10px] font-bold bg-amber-500 text-white rounded-md">
+              <span className="px-1 py-0.2 text-[9px] font-mono font-bold bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded">
                 {exportSettings.customBlocklist.length}
               </span>
             )}
@@ -172,7 +162,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               id="clear-batch-btn"
               onClick={onClearQueue}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100/80 dark:hover:bg-rose-900/60 border border-rose-200/80 dark:border-rose-900/60 transition-all duration-150 active:scale-[0.98]"
+              className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-zinc-500 dark:text-zinc-400 hover:text-rose-500 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 border border-transparent hover:border-rose-200/50 dark:hover:border-rose-900/40 transition-all duration-150 active:scale-[0.98]"
               title="Clear current batch queue"
             >
               <Trash2 className="w-3.5 h-3.5" />
@@ -184,10 +174,10 @@ export const Navbar: React.FC<NavbarProps> = ({
           <button
             id="theme-toggle-btn"
             onClick={onToggleDarkMode}
-            className="p-2 rounded-xl text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 transition-all duration-150 active:scale-[0.95] shadow-2xs"
+            className="p-1.5 rounded-lg text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-900 border border-transparent hover:border-zinc-200 dark:hover:border-white/[0.08] transition-all duration-150 active:scale-[0.95]"
             title="Toggle theme mode"
           >
-            {darkMode ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-indigo-600" />}
+            {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
           </button>
         </div>
       </div>

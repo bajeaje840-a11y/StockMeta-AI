@@ -5,7 +5,6 @@ import os from 'os';
 import zlib from 'zlib';
 import crypto from 'crypto';
 import { execSync } from 'child_process';
-import { fileURLToPath } from 'url';
 import { GoogleGenAI, Type } from '@google/genai';
 
 /**
@@ -40,13 +39,10 @@ function ensureImageMagickPolicy() {
 }
 ensureImageMagickPolicy();
 
-const currentDir =
-  typeof __dirname !== 'undefined'
-    ? __dirname
-    : path.dirname(fileURLToPath(import.meta.url));
+const currentDir = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
 
 const app = express();
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+const PORT = 3000;
 
 // Increase payload limit for base64 image uploads
 app.use(express.json({ limit: '50mb' }));
