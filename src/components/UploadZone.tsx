@@ -1,6 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Upload, FolderPlus, FilePlus, Sparkles, CheckCircle2, FileImage, Video, FileText, FileCode } from 'lucide-react';
-import { bytesToSize, getFormatCategory } from '../utils/fileHelpers';
+import { Upload, FolderPlus, FilePlus, Sparkles, Image as ImageIcon, Film, Layers, FileCode, CheckCircle2 } from 'lucide-react';
 
 interface UploadZoneProps {
   onFilesAdded: (files: File[]) => void;
@@ -17,17 +16,11 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
-  const supportedFormats = [
-    { label: 'JPG / JPEG', cat: 'image' },
-    { label: 'PNG', cat: 'image' },
-    { label: 'SVG (Vector)', cat: 'vector' },
-    { label: 'EPS (Vector)', cat: 'vector' },
-    { label: 'AI (Illustrator)', cat: 'vector' },
-    { label: 'WEBP', cat: 'image' },
-    { label: 'TIFF', cat: 'image' },
-    { label: 'HEIC', cat: 'image' },
-    { label: 'PDF', cat: 'pdf' },
-    { label: 'MP4 / MOV', cat: 'video' },
+  const formatCategories = [
+    { label: 'Photos & Art', ext: 'JPG, PNG, WEBP, TIFF, HEIC', icon: ImageIcon },
+    { label: 'Vectors & Logos', ext: 'EPS, AI, SVG', icon: Layers },
+    { label: 'Footage & Video', ext: 'MP4, MOV', icon: Film },
+    { label: 'Documents', ext: 'PDF', icon: FileCode },
   ];
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -117,55 +110,71 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
   };
 
   return (
-    <div className="w-full mb-6">
+    <div className="w-full">
       <div
         id="upload-dropzone"
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className={`relative overflow-hidden rounded-2xl border-2 border-dashed transition-all duration-200 p-8 text-center cursor-pointer ${
+        className={`relative overflow-hidden rounded-2xl border transition-all duration-200 p-8 sm:p-10 text-center cursor-pointer ${
           isDragging
-            ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-950/30 scale-[1.01] shadow-xl'
-            : 'border-gray-300 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/40 hover:border-indigo-400 dark:hover:border-indigo-500 hover:bg-gray-100/50 dark:hover:bg-gray-800/40'
+            ? 'border-indigo-500 bg-indigo-50/80 dark:bg-indigo-950/40 shadow-xl ring-4 ring-indigo-500/10 scale-[1.005]'
+            : 'border-slate-200 dark:border-slate-800/90 bg-white/70 dark:bg-slate-900/60 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-white dark:hover:bg-slate-900 shadow-xs'
         }`}
       >
-        {/* Background Decorative Accent */}
-        <div className="absolute -right-12 -top-12 w-48 h-48 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute -left-12 -bottom-12 w-48 h-48 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
+        {/* Subtle Ambient Radial Lighting */}
+        <div className="absolute inset-0 bg-radial-[at_50%_0%] from-indigo-500/5 via-transparent to-transparent pointer-events-none" />
 
         <div className="relative z-10 max-w-2xl mx-auto flex flex-col items-center">
-          {/* Upload Icon */}
-          <div className="h-16 w-16 mb-4 rounded-2xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 flex items-center justify-center ring-8 ring-indigo-500/5 shadow-inner">
-            <Upload className={`w-8 h-8 ${isDragging ? 'animate-bounce' : ''}`} />
+          {/* Main Icon Capsule */}
+          <div className="relative mb-5 group">
+            <div className={`h-16 w-16 rounded-2xl flex items-center justify-center transition-all duration-200 ${
+              isDragging
+                ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30 scale-110'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200/80 dark:border-slate-700/80 group-hover:border-indigo-300 dark:group-hover:border-indigo-700/60 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 group-hover:scale-105'
+            }`}>
+              <Upload className={`w-7 h-7 stroke-[2.2] ${isDragging ? 'animate-bounce' : ''}`} />
+            </div>
+            <div className="absolute -top-1 -right-1 p-1 rounded-full bg-indigo-600 text-white shadow-xs">
+              <Sparkles className="w-3 h-3" />
+            </div>
           </div>
 
-          <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-1">
-            Drag & Drop Stock Media or Select Folders
+          <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white mb-2">
+            {isDragging ? 'Release to queue files' : 'Drop your stock media or browse'}
           </h2>
-          <p className="text-sm text-gray-600 dark:text-gray-400 mb-6 max-w-lg">
-            Upload photos, illustrations, vector files, PDFs, or stock video clips. Our AI Vision model automatically generates SEO Titles, Descriptions, and Keywords.
+          <p className="text-sm font-normal text-slate-500 dark:text-slate-400 mb-6 max-w-lg leading-relaxed">
+            Batch process photos, legacy EPS/AI vectors, videos, and PDFs with AI metadata generation tuned for major microstock agencies.
           </p>
 
           {/* Action Buttons */}
-          <div className="flex flex-wrap items-center justify-center gap-3 mb-6">
+          <div className="flex flex-wrap items-center justify-center gap-3 mb-7">
             {/* Select Files Button */}
             <button
               id="select-files-btn"
-              onClick={() => fileInputRef.current?.click()}
-              className="inline-flex items-center space-x-2 px-5 py-2.5 rounded-xl font-medium text-sm text-white bg-indigo-600 hover:bg-indigo-700 shadow-lg shadow-indigo-500/25 transition transform active:scale-95"
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                fileInputRef.current?.click();
+              }}
+              className="inline-flex items-center space-x-2 px-5 py-2.5 rounded-xl font-semibold text-sm text-white bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 shadow-sm shadow-indigo-600/25 transition-all duration-150 active:scale-[0.98]"
             >
-              <FilePlus className="w-4 h-4" />
-              <span>Select Files</span>
+              <FilePlus className="w-4 h-4 stroke-[2.2]" />
+              <span>Choose Media Files</span>
             </button>
 
             {/* Select Folder Button */}
             <button
               id="select-folder-btn"
-              onClick={() => folderInputRef.current?.click()}
-              className="inline-flex items-center space-x-2 px-5 py-2.5 rounded-xl font-medium text-sm text-gray-800 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-300 dark:border-gray-700 shadow-sm transition transform active:scale-95"
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                folderInputRef.current?.click();
+              }}
+              className="inline-flex items-center space-x-2 px-5 py-2.5 rounded-xl font-semibold text-sm text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-750 border border-slate-200 dark:border-slate-700 shadow-2xs transition-all duration-150 active:scale-[0.98]"
             >
-              <FolderPlus className="w-4 h-4 text-indigo-500" />
-              <span>Select Whole Folder</span>
+              <FolderPlus className="w-4 h-4 text-indigo-500 stroke-[2.2]" />
+              <span>Import Entire Folder</span>
             </button>
 
             {/* Hidden File Inputs */}
@@ -190,22 +199,31 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
             />
           </div>
 
-          {/* Supported Format Badges */}
-          <div className="flex flex-wrap items-center justify-center gap-1.5 max-w-xl">
-            <span className="text-xs text-gray-500 dark:text-gray-400 mr-1 font-medium">Accepted formats:</span>
-            {supportedFormats.map((fmt, idx) => (
-              <span
-                key={idx}
-                className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold bg-gray-200/70 dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-300/50 dark:border-gray-700"
-              >
-                {fmt.label}
-              </span>
-            ))}
+          {/* Supported Format Visual Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 w-full max-w-xl">
+            {formatCategories.map((item, idx) => {
+              const Icon = item.icon;
+              return (
+                <div
+                  key={idx}
+                  className="flex flex-col items-start px-3 py-2 rounded-xl bg-slate-50/80 dark:bg-slate-950/40 border border-slate-200/60 dark:border-slate-800/80 text-left"
+                >
+                  <div className="flex items-center space-x-1.5 mb-0.5">
+                    <Icon className="w-3.5 h-3.5 text-indigo-500" />
+                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200">{item.label}</span>
+                  </div>
+                  <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400 truncate w-full">
+                    {item.ext}
+                  </span>
+                </div>
+              );
+            })}
           </div>
 
-          {/* Note on non-raster preview processing */}
-          <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-3 italic">
-            * Note: Non-raster inputs (AI/EPS/PDF & MP4/MOV) are frame-extracted or preview-rendered automatically before sending to AI.
+          {/* Micro Guarantee Note */}
+          <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-4 flex items-center space-x-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
+            <span>PostScript vector renderer, video keyframe extractor & trademark sanitizer included</span>
           </p>
         </div>
       </div>

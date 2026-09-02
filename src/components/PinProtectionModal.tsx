@@ -57,26 +57,23 @@ export function PinProtectionModal({ onUnlock }: PinProtectionModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md transition-all">
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md transition-all animate-fade-in">
       <div
-        className={`w-full max-w-md bg-slate-900 border border-slate-800/80 rounded-2xl p-6 sm:p-8 shadow-2xl relative overflow-hidden transition-all duration-300 ${
+        className={`w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl relative overflow-hidden transition-all duration-300 ${
           shake ? 'animate-bounce' : ''
         }`}
-        style={{
-          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 0 40px -10px rgba(99, 102, 241, 0.15)',
-        }}
       >
-        {/* Decorative Top Accent Glow */}
-        <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-48 h-48 bg-indigo-500/20 rounded-full blur-3xl pointer-events-none" />
+        {/* Subtle decorative glow */}
+        <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-48 h-48 bg-indigo-500/10 dark:bg-indigo-500/20 rounded-full blur-3xl pointer-events-none" />
 
         {/* Lock Icon Emblem */}
         <div className="flex flex-col items-center text-center mb-6">
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center text-white shadow-lg shadow-indigo-500/30 mb-4 ring-4 ring-indigo-500/10">
-            <Lock className="w-8 h-8" />
+          <div className="w-14 h-14 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200/80 dark:border-indigo-800/80 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shadow-sm mb-4">
+            <Lock className="w-7 h-7 stroke-[1.8]" />
           </div>
-          <h2 className="text-2xl font-bold text-white tracking-tight">Security Access</h2>
-          <p className="text-sm text-slate-400 mt-1.5">
-            Please enter the 5-digit PIN to access StockMeta AI
+          <h2 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">Security Access</h2>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+            Enter the 5-digit PIN to access StockMeta AI Pro Studio
           </p>
         </div>
 
@@ -108,14 +105,14 @@ export function PinProtectionModal({ onUnlock }: PinProtectionModalProps) {
                   return (
                     <div
                       key={index}
-                      className={`w-11 h-13 sm:w-13 sm:h-15 flex items-center justify-center text-xl sm:text-2xl font-bold rounded-xl border transition-all duration-200 ${
+                      className={`w-11 h-13 sm:w-12 sm:h-14 flex items-center justify-center text-xl sm:text-2xl font-bold rounded-2xl border transition-all duration-200 ${
                         error
-                          ? 'border-red-500/80 bg-red-500/10 text-red-400'
+                          ? 'border-rose-500 bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400'
                           : isFilled
-                          ? 'border-indigo-500 bg-indigo-500/15 text-indigo-300 shadow-sm shadow-indigo-500/20'
+                          ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-300 shadow-2xs'
                           : isCurrent
-                          ? 'border-slate-500 bg-slate-800/80 text-white ring-2 ring-indigo-500/30'
-                          : 'border-slate-800 bg-slate-950/60 text-slate-500'
+                          ? 'border-slate-400 dark:border-slate-500 bg-white dark:bg-slate-800 text-slate-900 dark:text-white ring-2 ring-indigo-500/20'
+                          : 'border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 text-slate-400'
                       }`}
                     >
                       {isFilled ? '●' : ''}
@@ -126,33 +123,33 @@ export function PinProtectionModal({ onUnlock }: PinProtectionModalProps) {
             </div>
 
             {error && (
-              <div className="flex items-center justify-center gap-1.5 text-xs text-red-400 font-medium pt-2 animate-fadeIn">
-                <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+              <div className="flex items-center justify-center gap-1.5 text-xs text-rose-600 dark:text-rose-400 font-medium pt-2">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                 <span>Incorrect PIN. Please enter the valid 5-digit code.</span>
               </div>
             )}
           </div>
 
-          {/* Keypad Quick Numbers / Submit Button */}
+          {/* Unlock Dashboard Button */}
           <button
             type="submit"
             disabled={pin.length !== 5}
-            className={`w-full py-3.5 px-4 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all shadow-md ${
+            className={`w-full py-3 px-4 rounded-xl font-semibold text-xs flex items-center justify-center gap-2 transition-all shadow-2xs ${
               pin.length === 5
-                ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-600/25 cursor-pointer active:scale-[0.99]'
-                : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-600/20 cursor-pointer active:scale-[0.99]'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed border border-slate-200/60 dark:border-slate-700/60'
             }`}
           >
-            <span>Unlock Dashboard</span>
+            <span>Unlock Studio</span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>
 
         {/* Developer Credit Footer */}
-        <div className="mt-8 pt-4 border-t border-slate-800/80 flex flex-col items-center justify-center text-center">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-800/60 border border-slate-700/50 text-xs font-medium text-slate-300 shadow-sm">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span>Developed by <strong className="text-indigo-300 font-semibold">Woalid</strong></span>
+        <div className="mt-6 pt-4 border-t border-slate-100 dark:border-slate-800/80 flex flex-col items-center justify-center text-center">
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 text-xs font-medium text-slate-600 dark:text-slate-300">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span>Crafted by <strong className="text-indigo-600 dark:text-indigo-400 font-semibold">Woalid</strong></span>
           </div>
         </div>
       </div>

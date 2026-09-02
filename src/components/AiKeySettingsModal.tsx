@@ -279,26 +279,26 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 w-full max-w-3xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] transition-colors">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-fade-in">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 w-full max-w-3xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] transition-colors">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/50">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200/80 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/90 backdrop-blur-xs">
           <div className="flex items-center space-x-3">
-            <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">
-              <Key className="w-5 h-5" />
+            <div className="p-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 border border-indigo-200/60 dark:border-indigo-800/60">
+              <Key className="w-5 h-5 stroke-[1.8]" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                AI Provider & API Keys Configuration
+              <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                AI Engine & Key Settings
               </h2>
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-                Choose your AI engine (Gemini, ChatGPT, Claude, DeepSeek) for microstock SEO metadata generation
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Configure Gemini, OpenAI, Claude, or DeepSeek for automated stock SEO metadata
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-200/60 dark:hover:bg-gray-800 transition"
+            className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -306,8 +306,8 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
 
         {/* Missing Key Notification Banner (if triggered during batch start) */}
         {promptReason && (
-          <div className="px-6 py-3 bg-amber-500/10 border-b border-amber-500/20 flex items-center space-x-3 text-amber-700 dark:text-amber-300 text-xs">
-            <AlertCircle className="w-4 h-4 flex-shrink-0 text-amber-500" />
+          <div className="px-6 py-3 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-800/60 flex items-center space-x-3 text-amber-800 dark:text-amber-200 text-xs font-medium">
+            <AlertCircle className="w-4 h-4 shrink-0 text-amber-500" />
             <span>{promptReason}</span>
           </div>
         )}
@@ -316,7 +316,7 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
           {/* Provider Selection Tabs */}
           <div>
-            <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">
+            <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-2">
               Select AI Engine:
             </label>
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
@@ -333,15 +333,15 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
                       setActiveTab(pKey);
                       setTestStatus({ loading: false });
                     }}
-                    className={`relative p-3 rounded-xl border flex flex-col items-center text-center transition-all ${
+                    className={`relative p-3 rounded-xl border flex flex-col items-center text-center transition-all duration-150 active:scale-[0.98] ${
                       isActive
-                        ? 'bg-indigo-500/10 border-indigo-500 dark:border-indigo-400 text-indigo-900 dark:text-indigo-100 shadow-sm ring-1 ring-indigo-500'
-                        : 'bg-gray-50 dark:bg-gray-800/60 border-gray-200 dark:border-gray-700/80 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
+                        ? 'bg-indigo-50/80 dark:bg-indigo-950/60 border-indigo-500/80 dark:border-indigo-400 text-indigo-950 dark:text-indigo-100 shadow-2xs ring-1 ring-indigo-500/40'
+                        : 'bg-slate-50/80 dark:bg-slate-800/40 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
                     }`}
                   >
                     <div className="mb-1.5">{getProviderIcon(pKey)}</div>
                     <span className="text-xs font-bold truncate w-full">{meta.shortName}</span>
-                    <span className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">
+                    <span className="text-[10px] mt-0.5 font-medium">
                       {configured ? (
                         <span className="text-emerald-600 dark:text-emerald-400 flex items-center justify-center gap-0.5">
                           <Check className="w-2.5 h-2.5" /> Ready
@@ -357,15 +357,15 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
           </div>
 
           {/* Active Provider Details Card */}
-          <div className="p-4 rounded-xl bg-gray-50 dark:bg-gray-800/40 border border-gray-200 dark:border-gray-700/80 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-gray-200 dark:border-gray-700">
+          <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200/80 dark:border-slate-700/80">
               <div className="flex items-center space-x-2.5">
                 {getProviderIcon(activeTab)}
                 <div>
-                  <h3 className="text-sm font-bold text-gray-900 dark:text-white">
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
                     {currentProviderMeta.name}
                   </h3>
-                  <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
                     {currentProviderMeta.tagline}
                   </p>
                 </div>
@@ -375,7 +375,7 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
                 href={currentProviderMeta.keyHelpUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center space-x-1 text-xs text-indigo-600 dark:text-indigo-400 hover:underline font-medium"
+                className="inline-flex items-center space-x-1 text-xs text-indigo-600 dark:text-indigo-400 hover:underline font-semibold"
               >
                 <span>Get API Key</span>
                 <ExternalLink className="w-3 h-3" />
@@ -385,12 +385,12 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
             {/* API Key Input */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
-                  <Key className="w-3.5 h-3.5 text-gray-500" />
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                  <Key className="w-3.5 h-3.5 text-slate-400" />
                   <span>API Key</span>
                   {activeTab === 'gemini' && (
-                    <span className="text-[10px] font-normal text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.2 rounded">
-                      Optional (Server Key Pool Active)
+                    <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800/60 px-1.5 py-0.5 rounded-md">
+                      Optional (Server AI Available)
                     </span>
                   )}
                 </label>
@@ -402,16 +402,16 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
                       setTestStatus({
                         loading: false,
                         success: true,
-                        message: 'Switched to Free Built-in Server Gemini AI. Click "Test Gemini Connection" or "Save Configuration".',
+                        message: 'Switched to Built-in Server Gemini AI. Click "Test Connection" to verify.',
                       });
                     }}
-                    className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1"
+                    className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1"
                   >
-                    <span>⚡ Use Free Built-in AI</span>
+                    <span>⚡ Use Built-in Free AI</span>
                   </button>
                 )}
                 {activeTab !== 'gemini' && (
-                  <span className="text-[10px] text-gray-400">
+                  <span className="text-[10px] font-mono text-slate-400">
                     {currentProviderMeta.keyFormatHint}
                   </span>
                 )}
@@ -440,14 +440,14 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
                     else if (activeTab === 'deepseek') setFormData((p) => ({ ...p, deepseekKey: val }));
                     else setFormData((p) => ({ ...p, customKey: val }));
                   }}
-                  className="w-full text-xs rounded-xl bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 pl-3 pr-16 py-2.5 text-gray-900 dark:text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm"
+                  className="w-full text-xs rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 pl-3 pr-16 py-2.5 text-slate-900 dark:text-white font-mono placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 shadow-2xs transition-all"
                 />
 
                 <div className="absolute right-2 flex items-center space-x-1">
                   <button
                     type="button"
                     onClick={() => toggleShowKey(activeTab)}
-                    className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                    className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
                     title={showKeyMap[activeTab] ? 'Hide API key' : 'Show API key'}
                   >
                     {showKeyMap[activeTab] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
@@ -457,25 +457,25 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
 
               {/* Format Hint / Warning */}
               {getFormatTip() && (
-                <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-800 dark:text-amber-300 text-[11px] flex items-start space-x-2">
-                  <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-amber-500" />
+                <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 text-[11px] flex items-start space-x-2">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-500" />
                   <span>{getFormatTip()?.text}</span>
                 </div>
               )}
 
               {/* Quick Gemini Guidance Card */}
               {activeTab === 'gemini' && (
-                <div className="p-3 rounded-lg bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/50 text-[11px] text-gray-600 dark:text-gray-400 space-y-1">
+                <div className="p-3 rounded-xl bg-indigo-50/50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/50 text-[11px] text-slate-600 dark:text-slate-300 space-y-1">
                   <div className="font-semibold text-indigo-900 dark:text-indigo-300 flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
                     <span>How to use Google Gemini:</span>
                   </div>
-                  <ul className="space-y-1 text-gray-700 dark:text-gray-300 pl-1 list-disc list-inside">
+                  <ul className="space-y-1 pl-1 list-disc list-inside">
                     <li>
-                      <span className="font-semibold text-emerald-600 dark:text-emerald-400">Easiest option:</span> Leave the API Key field blank to automatically use the built-in free Server AI.
+                      <span className="font-semibold text-emerald-700 dark:text-emerald-400">Zero-Config:</span> Leave blank to use the pre-configured server environment.
                     </li>
                     <li>
-                      Or get your personal key from{' '}
+                      Or get your custom key from{' '}
                       <a
                         href="https://aistudio.google.com/app/apikey"
                         target="_blank"
@@ -484,7 +484,7 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
                       >
                         Google AI Studio API Keys
                       </a>{' '}
-                      (starts with <code className="bg-indigo-100 dark:bg-indigo-900/60 px-1 py-0.5 rounded font-mono text-indigo-700 dark:text-indigo-300">AQ...</code> or <code className="bg-indigo-100 dark:bg-indigo-900/60 px-1 py-0.5 rounded font-mono text-indigo-700 dark:text-indigo-300">AIzaSy...</code>) and paste it.
+                      and paste it above.
                     </li>
                   </ul>
                 </div>
@@ -493,7 +493,7 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
 
             {/* Model Selection Dropdown */}
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-gray-700 dark:text-gray-300">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
                 Choose Model:
               </label>
               <select
@@ -516,7 +516,7 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
                   else if (activeTab === 'deepseek') setFormData((p) => ({ ...p, deepseekModel: val }));
                   else setFormData((p) => ({ ...p, customModel: val }));
                 }}
-                className="w-full text-xs rounded-xl bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 px-3 py-2.5 text-gray-900 dark:text-white font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm"
+                className="w-full text-xs rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-3 py-2.5 text-slate-900 dark:text-white font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 shadow-2xs"
               >
                 {currentProviderMeta.models.map((m) => (
                   <option key={m.id} value={m.id}>
@@ -529,9 +529,9 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
             {/* Optional Custom Base URL for DeepSeek, OpenRouter, Custom */}
             {(activeTab === 'deepseek' || activeTab === 'custom' || activeTab === 'openai') && (
               <div className="space-y-1.5 pt-1">
-                <label className="text-xs font-medium text-gray-600 dark:text-gray-400 flex items-center justify-between">
+                <label className="text-xs font-medium text-slate-600 dark:text-slate-400 flex items-center justify-between">
                   <span>Custom API Base URL (Optional)</span>
-                  <span className="text-[10px] text-gray-400">Leave blank for default API</span>
+                  <span className="text-[10px] text-slate-400">Leave blank for default API</span>
                 </label>
                 <input
                   type="text"
@@ -555,7 +555,7 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
                     else if (activeTab === 'openai') setFormData((p) => ({ ...p, openaiBaseUrl: val }));
                     else setFormData((p) => ({ ...p, customBaseUrl: val }));
                   }}
-                  className="w-full text-xs rounded-xl bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 px-3 py-2 text-gray-900 dark:text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full text-xs rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-3 py-2 text-slate-900 dark:text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                 />
               </div>
             )}
@@ -567,7 +567,7 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
                   type="button"
                   onClick={handleTestConnection}
                   disabled={testStatus.loading}
-                  className="inline-flex items-center space-x-1.5 px-3.5 py-2 text-xs font-semibold rounded-xl bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 transition shadow-sm"
+                  className="inline-flex items-center space-x-1.5 px-3.5 py-2 text-xs font-semibold rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-50 transition-all active:scale-95 shadow-2xs border border-slate-200/80 dark:border-slate-700/80"
                 >
                   {testStatus.loading ? (
                     <>
@@ -584,18 +584,18 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
               </div>
 
               {testStatus.success && (
-                <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-start space-x-2.5 text-xs text-emerald-700 dark:text-emerald-300">
-                  <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5 text-emerald-500" />
+                <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 flex items-start space-x-2.5 text-xs text-emerald-800 dark:text-emerald-200 font-medium">
+                  <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-500" />
                   <div>
-                    <span className="font-bold">Connection Successful! </span>
+                    <span className="font-bold">Connection Verified! </span>
                     <span>{testStatus.message}</span>
                   </div>
                 </div>
               )}
 
               {testStatus.error && (
-                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-start space-x-2.5 text-xs text-rose-700 dark:text-rose-300">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5 text-rose-500" />
+                <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 flex items-start space-x-2.5 text-xs text-rose-800 dark:text-rose-200 font-medium">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-500" />
                   <div>
                     <span className="font-bold">Connection Failed: </span>
                     <span>{testStatus.error}</span>
@@ -606,19 +606,19 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
           </div>
 
           {/* Microstock Marketplace Generation Settings */}
-          <div className="p-4 rounded-xl bg-gray-50 dark:bg-gray-800/40 border border-gray-200 dark:border-gray-700/80 space-y-4">
-            <h4 className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wider flex items-center gap-1.5">
+          <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800 space-y-4">
+            <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-1.5">
               <Sliders className="w-3.5 h-3.5 text-indigo-500" />
-              Microstock SEO Output Preferences
+              Microstock SEO Output Tuning
             </h4>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {/* Keyword Count */}
               <div>
-                <div className="flex justify-between items-center text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <div className="flex justify-between items-center text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
                   <span>Target Keyword Count:</span>
-                  <span className="font-bold text-indigo-600 dark:text-indigo-400">
-                    {formData.keywordCount || 49} tags {formData.keywordCount === 49 ? '(Adobe Stock Optimal)' : ''}
+                  <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400">
+                    {formData.keywordCount || 49} tags {formData.keywordCount === 49 ? '(Optimal)' : ''}
                   </span>
                 </div>
                 <input
@@ -630,28 +630,28 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
                   onChange={(e) =>
                     setFormData((p) => ({ ...p, keywordCount: parseInt(e.target.value, 10) }))
                   }
-                  className="w-full h-1.5 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                  className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-600"
                 />
-                <div className="flex justify-between text-[10px] text-gray-400 mt-1">
-                  <span>25 tags (Min)</span>
+                <div className="flex justify-between text-[10px] font-mono text-slate-400 mt-1">
+                  <span>25 tags</span>
                   <span>35 tags</span>
-                  <span className="font-semibold text-indigo-500">49 tags (Adobe Stock Max)</span>
+                  <span className="font-semibold text-indigo-500">49 tags</span>
                 </div>
               </div>
 
               {/* Custom Guidance Instructions */}
               <div>
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
                   Custom Prompt Guidance (Optional):
                 </label>
                 <input
                   type="text"
-                  placeholder="e.g., Focus on 3D illustration, pastel background, copy space"
+                  placeholder="e.g. Focus on 3D isometric, copy space, high contrast"
                   value={formData.customInstructions || ''}
                   onChange={(e) =>
                     setFormData((p) => ({ ...p, customInstructions: e.target.value }))
                   }
-                  className="w-full text-xs rounded-xl bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full text-xs rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-3 py-2 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                 />
               </div>
             </div>
@@ -659,10 +659,10 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
         </div>
 
         {/* Footer Actions */}
-        <div className="px-6 py-4 border-t border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/50 flex flex-wrap items-center justify-between gap-3">
-          <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1.5">
+        <div className="px-6 py-4 border-t border-slate-200/80 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/90 backdrop-blur-xs flex flex-wrap items-center justify-between gap-3">
+          <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
             <span>Active Engine:</span>
-            <span className="font-bold text-gray-900 dark:text-white">
+            <span className="font-bold text-slate-900 dark:text-white">
               {AI_PROVIDERS[activeTab].name}
             </span>
           </div>
@@ -671,7 +671,7 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-xs font-semibold rounded-xl text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition"
+              className="px-4 py-2 text-xs font-semibold rounded-xl text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
             >
               Cancel
             </button>
@@ -679,7 +679,7 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
             <button
               type="button"
               onClick={() => handleSaveAndApply(false)}
-              className="px-4 py-2 text-xs font-semibold rounded-xl text-white bg-indigo-600 hover:bg-indigo-700 shadow-md shadow-indigo-500/20 transition"
+              className="px-4 py-2 text-xs font-semibold rounded-xl text-white bg-indigo-600 hover:bg-indigo-500 shadow-2xs transition-all active:scale-95"
             >
               Save Configuration
             </button>
@@ -688,7 +688,7 @@ export const AiKeySettingsModal: React.FC<AiKeySettingsModalProps> = ({
               <button
                 type="button"
                 onClick={() => handleSaveAndApply(true)}
-                className="px-4 py-2 text-xs font-semibold rounded-xl text-white bg-emerald-600 hover:bg-emerald-700 shadow-md shadow-emerald-500/20 transition"
+                className="px-4 py-2 text-xs font-semibold rounded-xl text-white bg-emerald-600 hover:bg-emerald-500 shadow-2xs transition-all active:scale-95"
               >
                 Save & Start Processing
               </button>
