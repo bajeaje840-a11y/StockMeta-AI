@@ -550,6 +550,128 @@ function isGenericFilename(filename?: string): boolean {
   );
 }
 
+const ADOBE_AI_COMPATIBILITY_PROLOG = `
+%%BeginProlog
+/setcmykcolor where { pop } {
+  /setcmykcolor {
+    /k exch def /y exch def /m exch def /c exch def
+    1 c sub 1 k sub mul
+    1 m sub 1 k sub mul
+    1 y sub 1 k sub mul
+    setrgbcolor
+  } bind def
+} ifelse
+/fillstroke { gsave fill grestore stroke } bind def
+/eofillstroke { gsave eofill grestore stroke } bind def
+/rectfill where { pop } {
+  /rectfill {
+    /h exch def /w exch def /y exch def /x exch def
+    newpath x y moveto w 0 rlineto 0 h rlineto w neg 0 rlineto closepath fill
+  } bind def
+} ifelse
+/rectstroke where { pop } {
+  /rectstroke {
+    /h exch def /w exch def /y exch def /x exch def
+    newpath x y moveto w 0 rlineto 0 h rlineto w neg 0 rlineto closepath stroke
+  } bind def
+} ifelse
+/_m /moveto load def
+/_l /lineto load def
+/_c /curveto load def
+/_v { currentpoint 6 2 roll curveto } bind def
+/_y { 2 copy curveto } bind def
+/_k /setcmykcolor load def
+/_K /setcmykcolor load def
+/_g /setgray load def
+/_G /setgray load def
+/_rg /setrgbcolor load def
+/_RG /setrgbcolor load def
+/_rgb /setrgbcolor load def
+/_f /fill load def
+/_F /fill load def
+/_f* /eofill load def
+/_F* /eofill load def
+/_s /stroke load def
+/_S /stroke load def
+/_b /fillstroke load def
+/_B /fillstroke load def
+/_b* /eofillstroke load def
+/_B* /eofillstroke load def
+/_h /closepath load def
+/_H /closepath load def
+/_n /newpath load def
+/_N /newpath load def
+/_q /gsave load def
+/_Q /grestore load def
+/_w /setlinewidth load def
+/_W /clip load def
+/_W* /eoclip load def
+/_J /setlinecap load def
+/_j /setlinejoin load def
+/_M /setmiterlimit load def
+/_d /setdash load def
+/_i /setflat load def
+/_x { pop pop pop pop pop pop } bind def
+/_X { pop pop pop pop pop pop } bind def
+/_xa { pop pop pop pop } bind def
+/_Xa { pop pop pop pop } bind def
+/_xk { setcmykcolor } bind def
+/_Xk { setcmykcolor } bind def
+/_xg { setgray } bind def
+/_Xg { setgray } bind def
+/*u {} def
+/*U {} def
+/*a {} def
+/*A {} def
+/_u {} def
+/_U {} def
+/_O { pop } bind def
+/_o { pop } bind def
+/_R { pop } bind def
+/_r { pop } bind def
+/_p { pop } bind def
+/_P { pop } bind def
+/_e { pop } bind def
+/_E { pop } bind def
+/Adobe_level2_AI5 20 dict def
+Adobe_level2_AI5 /initialize { } put
+Adobe_level2_AI5 /terminate { } put
+/Adobe_cmykcolor_AI5 20 dict def
+Adobe_cmykcolor_AI5 /initialize { } put
+Adobe_cmykcolor_AI5 /terminate { } put
+/Adobe_cshow 20 dict def
+Adobe_cshow /initialize { } put
+Adobe_cshow /terminate { } put
+/Adobe_customcolor 20 dict def
+Adobe_customcolor /initialize { } put
+Adobe_customcolor /terminate { } put
+/Adobe_typography_AI5 20 dict def
+Adobe_typography_AI5 /initialize { } put
+Adobe_typography_AI5 /terminate { } put
+/Adobe_Illustrator_AI5 20 dict def
+Adobe_Illustrator_AI5 /initialize { } put
+Adobe_Illustrator_AI5 /terminate { } put
+Adobe_Illustrator_AI5 /set_bounds { pop pop pop pop } put
+Adobe_Illustrator_AI5 /set_gradient { } put
+Adobe_Illustrator_AI5 /test_level2 { true } put
+/Adobe_pattern_AI5 20 dict def
+Adobe_pattern_AI5 /initialize { } put
+Adobe_pattern_AI5 /terminate { } put
+/Adobe_blend_AI5 20 dict def
+Adobe_blend_AI5 /initialize { } put
+Adobe_blend_AI5 /terminate { } put
+/Adobe_paint_AI5 20 dict def
+Adobe_paint_AI5 /initialize { } put
+Adobe_paint_AI5 /terminate { } put
+/Adobe_ColorImage_AI6 20 dict def
+Adobe_ColorImage_AI6 /initialize { } put
+Adobe_ColorImage_AI6 /terminate { } put
+/Adobe_CoolType 20 dict def
+Adobe_CoolType /initialize { } put
+Adobe_CoolType /terminate { } put
+%%EndProlog
+`;
+
 /**
  * Multi-Strategy High-Fidelity Vector Preview & AI Visual Renderer (Ghostscript & ImageMagick & Illustrator PrivateData)
  * Converts EPS, AI, PS, PDF vector files directly into color-accurate, high-resolution JPEG images.
@@ -576,12 +698,12 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
         const tiffPath = path.join(tmpDir, `embedded_${randId}.tif`);
         try {
           fs.writeFileSync(tiffPath, fileBuffer.subarray(tiffOffset, tiffOffset + tiffLength));
-          execSync(`convert "${tiffPath}" "${outPath}"`, { timeout: 15000, stdio: 'pipe' });
+          execSync(`convert "${tiffPath}" -background white -flatten "${outPath}"`, { timeout: 15000, stdio: 'pipe' });
           if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
             return fs.readFileSync(outPath);
           }
         } catch (e) {
-          // Fallback
+          // Fallback to PostScript stream
         } finally {
           if (fs.existsSync(tiffPath)) {
             try { fs.unlinkSync(tiffPath); } catch {}
@@ -589,16 +711,18 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
         }
       }
 
-      // 1b. Clean PostScript stream by stripping the binary header
-      const psStart = fileBuffer.indexOf(Buffer.from('%!PS-Adobe'));
-      if (psStart !== -1) {
-        cleanPsBuffer = fileBuffer.subarray(psStart);
-      } else if (psOffset > 0 && psOffset < fileBuffer.length) {
+      // 1b. Clean PostScript stream by cleanly slicing the exact PostScript segment (stripping binary DOS header & trailing binary TIFF)
+      if (psOffset > 0 && psOffset < fileBuffer.length) {
         const end = (psLength > 0 && psOffset + psLength <= fileBuffer.length) ? psOffset + psLength : fileBuffer.length;
         cleanPsBuffer = fileBuffer.subarray(psOffset, end);
+      } else {
+        const psStart = fileBuffer.indexOf(Buffer.from('%!PS-Adobe'));
+        if (psStart !== -1) {
+          cleanPsBuffer = fileBuffer.subarray(psStart);
+        }
       }
     } else {
-      // Check for MacBinary 128-byte header or leading non-PS characters
+      // Check for MacBinary 128-byte header, BOM, or leading non-PS characters
       const psStart = fileBuffer.indexOf(Buffer.from('%!PS-Adobe'));
       if (psStart > 0 && psStart < 1024) {
         cleanPsBuffer = fileBuffer.subarray(psStart);
@@ -610,26 +734,14 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
       }
     }
 
-    // Fix %%BoundingBox: (atend) commonly produced by Illustrator 10 / PostScript export
-    let psString = cleanPsBuffer.toString('latin1');
-    if (psString.includes('%%BoundingBox: (atend)') || psString.includes('%%BoundingBox:(atend)')) {
-      // Look for the actual trailer BoundingBox or HiResBoundingBox
-      const bboxMatches = Array.from(psString.matchAll(/%%(?:HiRes)?BoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/gi));
-      let validBBox: string | null = null;
-      for (const m of bboxMatches) {
-        const x1 = parseFloat(m[1]);
-        const y1 = parseFloat(m[2]);
-        const x2 = parseFloat(m[3]);
-        const y2 = parseFloat(m[4]);
-        if (!isNaN(x1) && !isNaN(y1) && !isNaN(x2) && !isNaN(y2) && (x2 > x1 || y2 > y1)) {
-          validBBox = `%%BoundingBox: ${Math.round(x1)} ${Math.round(y1)} ${Math.round(x2)} ${Math.round(y2)}`;
-          break;
-        }
+    // Strip any trailing binary data after the final %%EOF
+    const eofIndex = cleanPsBuffer.lastIndexOf(Buffer.from('%%EOF'));
+    if (eofIndex !== -1 && eofIndex + 5 < cleanPsBuffer.length) {
+      let end = eofIndex + 5;
+      while (end < cleanPsBuffer.length && (cleanPsBuffer[end] === 0x0A || cleanPsBuffer[end] === 0x0D || cleanPsBuffer[end] === 0x20)) {
+        end++;
       }
-      if (validBBox) {
-        psString = psString.replace(/%%BoundingBox:\s*\(atend\)/gi, validBBox);
-        cleanPsBuffer = Buffer.from(psString, 'latin1');
-      }
+      cleanPsBuffer = cleanPsBuffer.subarray(0, end);
     }
 
     // Strategy 2: Multi-chunk Adobe Illustrator PrivateData PDF extraction (%AI9_PrivateDataBegin, %AI12, %AI24, %%BeginData)
@@ -829,21 +941,70 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
       } catch (e) {}
     }
 
-    // Strategy 6: Ghostscript directly on clean EPS PostScript file (with EPSCrop)
-    const psPath = path.join(tmpDir, `clean_${randId}${ext}`);
-    fs.writeFileSync(psPath, cleanPsBuffer);
+    // Fix %%BoundingBox: (atend) and inject Adobe Illustrator compatibility prolog
+    let psString = cleanPsBuffer.toString('latin1');
+    if (psString.includes('%%BoundingBox: (atend)') || psString.includes('%%BoundingBox:(atend)')) {
+      const bboxMatches = Array.from(psString.matchAll(/%%(?:HiRes)?BoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/gi));
+      let validBBox: string | null = null;
+      for (const m of bboxMatches) {
+        const x1 = parseFloat(m[1]);
+        const y1 = parseFloat(m[2]);
+        const x2 = parseFloat(m[3]);
+        const y2 = parseFloat(m[4]);
+        if (!isNaN(x1) && !isNaN(y1) && !isNaN(x2) && !isNaN(y2) && (x2 > x1 || y2 > y1)) {
+          validBBox = `%%BoundingBox: ${Math.round(x1)} ${Math.round(y1)} ${Math.round(x2)} ${Math.round(y2)}`;
+          break;
+        }
+      }
+      if (validBBox) {
+        psString = psString.replace(/%%BoundingBox:\s*\(atend\)/gi, validBBox);
+      }
+    }
 
+    // Inject full Adobe Illustrator compatibility prolog after the first PostScript header line
+    let psWithProlog = psString;
+    const psIndex = psString.indexOf('%!PS');
+    if (psIndex !== -1) {
+      let lineEnd = psString.indexOf('\n', psIndex);
+      if (lineEnd === -1) lineEnd = psIndex + 4;
+      else lineEnd = lineEnd + 1;
+      psWithProlog = psString.slice(0, lineEnd) + '\n' + ADOBE_AI_COMPATIBILITY_PROLOG + '\n' + psString.slice(lineEnd);
+    } else {
+      psWithProlog = '%!PS-Adobe-3.0 EPSF-3.0\n' + ADOBE_AI_COMPATIBILITY_PROLOG + '\n' + psString;
+    }
+
+    const psPath = path.join(tmpDir, `clean_${randId}${ext}`);
+    fs.writeFileSync(psPath, Buffer.from(psWithProlog, 'latin1'));
+
+    // Strategy 6: Ghostscript directly on clean EPS PostScript file (with EPSCrop & SAFER)
     try {
       execSync(
         `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -dEPSCrop -sDEVICE=jpeg -dJPEGQ=95 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${psPath}"`,
         { timeout: 15000, stdio: 'pipe' }
       );
       if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+        console.log(`[renderVectorBufferToJpeg] Strategy 6 success! Out size: ${fs.statSync(outPath).size}`);
         return fs.readFileSync(outPath);
       }
-    } catch (e) {}
+    } catch (e: any) {
+      console.log(`[renderVectorBufferToJpeg] Strategy 6 failed: ${e.message}`);
+    }
 
-    // Strategy 7: Ghostscript with Fixed Media & Auto-Fit (handles missing/invalid BoundingBoxes)
+    // Strategy 7: Ghostscript with -dNOSAFER (allows full PostScript Level 2 custom operator dictionary executions)
+    try {
+      execSync(
+        `gs -dNOSAFER -dBATCH -dNOPAUSE -dQUIET -dEPSCrop -sDEVICE=jpeg -dJPEGQ=95 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${psPath}"`,
+        { timeout: 15000, stdio: 'pipe' }
+      );
+      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
+        console.log(`[renderVectorBufferToJpeg] Strategy 7 success! Out size: ${fs.statSync(outPath).size}`);
+        return fs.readFileSync(outPath);
+      }
+    } catch (e: any) {
+      console.log(`[renderVectorBufferToJpeg] Strategy 7 failed: ${e.message}`);
+    }
+
+    // Strategy 8: Ghostscript with Fixed Media & Auto-Fit (handles missing/invalid BoundingBoxes)
     try {
       execSync(
         `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=95 -r150 -dDEVICEWIDTHPOINTS=1024 -dDEVICEHEIGHTPOINTS=1024 -dFIXEDMEDIA -dPDFFitPage -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${psPath}"`,
@@ -854,18 +1015,7 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
       }
     } catch (e) {}
 
-    // Strategy 8: Ghostscript standard full artboard
-    try {
-      execSync(
-        `gs -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=jpeg -dJPEGQ=95 -r150 -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -sOutputFile="${outPath}" "${psPath}"`,
-        { timeout: 15000, stdio: 'pipe' }
-      );
-      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
-        return fs.readFileSync(outPath);
-      }
-    } catch (e) {}
-
-    // Strategy 9: ImageMagick Convert with density
+    // Strategy 9: ImageMagick Convert with density & background flatten
     try {
       execSync(`convert -density 150 "${psPath}[0]" -background white -flatten "${outPath}"`, { timeout: 15000, stdio: 'pipe' });
       if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
@@ -881,7 +1031,7 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
       }
     } catch (e) {}
 
-    // Strategy 11: Direct simple convert
+    // Strategy 11: Direct simple convert fallback
     try {
       execSync(`convert "${psPath}" -background white -flatten "${outPath}"`, { timeout: 15000, stdio: 'pipe' });
       if (fs.existsSync(outPath) && fs.statSync(outPath).size > 500) {
@@ -907,6 +1057,7 @@ export function renderVectorBufferToJpeg(fileBuffer: Buffer, filename?: string):
 app.post('/api/render-vector', async (req, res) => {
   try {
     const { fileData, filename } = req.body;
+    console.log(`[/api/render-vector] Request received for filename: ${filename}, fileData length: ${fileData?.length}`);
     if (!fileData) {
       return res.status(400).json({ success: false, error: 'Missing fileData' });
     }
@@ -918,11 +1069,13 @@ app.post('/api/render-vector', async (req, res) => {
     cleanBase64 = cleanBase64.replace(/[\r\n\s]/g, '');
 
     const fileBuffer = Buffer.from(cleanBase64, 'base64');
+    console.log(`[/api/render-vector] Decoded buffer byte length: ${fileBuffer.length}`);
     if (fileBuffer.length === 0) {
       return res.status(400).json({ success: false, error: 'Empty file buffer' });
     }
 
     const jpegBuffer = renderVectorBufferToJpeg(fileBuffer, filename);
+    console.log(`[/api/render-vector] renderVectorBufferToJpeg returned: ${jpegBuffer ? `Buffer (${jpegBuffer.length} bytes)` : 'null'}`);
     if (!jpegBuffer || jpegBuffer.length === 0) {
       return res.status(422).json({
         success: false,
