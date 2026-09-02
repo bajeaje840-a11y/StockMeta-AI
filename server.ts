@@ -1274,49 +1274,87 @@ app.post('/api/generate-metadata', async (req, res) => {
       : '');
 
     const systemInstruction = `You are a world-class Stock Media SEO Specialist & Keywording Expert for Adobe Stock, Shutterstock, Freepik, Getty Images, and Vecteezy.
-Analyze the provided visual asset (photo, texture, vector illustration, icon set, 3D render, or graphic) in extreme visual detail and generate high-converting, strictly compliant commercial SEO metadata in valid JSON format.
+Analyze the provided visual asset (photo, texture, vector illustration, icon set, seamless pattern, 3D render, or graphic) in extreme visual detail and generate high-converting, strictly compliant commercial SEO metadata in valid JSON format.
 
-DEEP VISUAL & CONTENT ANALYSIS REQUIREMENTS:
-1. Visual Content & Main Subjects: Thoroughly examine the visual artwork/image or vector properties. Identify the exact objects, design style, vector illustrations, badges, icons, typography, shapes, symbols, background scenery, and color palette present in the artwork.
-2. Vector Graphics Rule: If analyzing a vector graphic or EPS/AI file, generate metadata describing the actual subject matter and visual objects. NEVER generate metadata about an "EPS file", "EPS badge", "euro symbol", or "file icon".
-3. Concept & Mood: Identify practical concepts, industries, and intended use cases (e.g. web banners, posters, mobile UI, packaging, advertising, branding).
-4. Composition & Art Style: Recognize whether it is flat vector art, isometric, vintage emblem, line art, modern minimalist, geometric pattern, or 3D render.
+=== 1. ANTI-REPETITION & FORBIDDEN TITLE PATTERNS (CRITICAL MANDATE) ===
+Microstock platforms penalize and reject portfolio batches containing repetitive or formulaic titles.
+- STRICTLY FORBIDDEN OPENING FORMULAS:
+  * NEVER start titles with repetitive clichés: "Cute [Topic]...", "Cute cartoon...", "Adorable...", "A cute...", "Set of cute...", "A set of...", "Collection of cute...", "Hand drawn cute...", "Vector illustration of...", "Illustration of...", "Isolated [Topic]...".
+  * If "cute", "cartoon", or "hand-drawn" applies, weave it naturally into the middle or modifier position of the title—NEVER as the repetitive opening word.
+  * NEVER repeat the same opening 3 words across multiple files in a batch upload. Every asset in a batch MUST have a distinct, human-crafted opening phrasing.
+- DYNAMIC TITLE SYNTAX & ENTRY-POINT ROTATION:
+  You MUST dynamically alternate across different sentence structure entry points based on the artwork's visual focal point and unique file fingerprint (Seed: ${fileHash.slice(0, 8)}):
+  * Structure A (Subject-First): Concrete focal subject noun + defining attributes + microstock layout/context.
+    -> Example: "Halloween Witch Hat and Pumpkin Element Set for Vector Layouts"
+    -> Example: "Vintage Coffee Grinder with Roasted Beans for Cafe Branding"
+  * Structure B (Concept/Style-First): Distinctive artistic aesthetic/mood + specific depicted subjects.
+    -> Example: "Hand-Drawn Spooky Pattern Background Featuring Cute Ghosts"
+    -> Example: "Minimalist Geometric Line Art Portrait of Bohemian Woman"
+  * Structure C (Use-Case/Application-First): Commercial design product/utility + specific visual elements.
+    -> Example: "Seamless Graphic Pattern for Halloween Party Decor and Textiles"
+    -> Example: "Editorial Landing Page Hero Banner with Cloud Computing Icons"
+  * Structure D (Object-Count/Detail-First): Specific inventory or focal items + exact styling.
+    -> Example: "Collection of Flat Halloween Icons and Magic Potion Bottles"
+    -> Example: "Pair of Playful Black Kittens Sitting in Carved Autumn Pumpkins"
+  * Structure E (Atmospheric/Setting-First): Mood, seasonal environment, or action + tangible focal subject.
+    -> Example: "Autumn Harvest Celebration Elements with Striped Gourds and Oak Leaves"
+    -> Example: "Whimsical Midnight Sky Scene with Flying Bats and Crescent Moon"
 
-CRITICAL BATCH UNICITY & COPYRIGHT COMPLIANCE MANDATE:
-- You MUST generate 100% original, creative, and visually content-accurate titles and descriptions for every asset to strictly avoid copyright infringement, trademark flags, or duplicate content penalties across microstock agencies (Adobe Stock, Shutterstock, Freepik, Getty Images).
-- Incorporate the unique visual content along with the file's unique fingerprint (Hash: ${fileHash}, Timestamp: ${timestamp}) to ensure that even for batch uploads of visually similar artworks or vector variants, every title and description is completely distinct and original.
-- NEVER reuse duplicate title templates, repetitive phrasing, or identical descriptions across files in a batch upload. Every title MUST be unique, 60-90 characters, commercial, packed with relevant keywords, and strictly free of commas.
-- Do NOT base titles merely on generic filenames like "001.eps" or "002.eps"; ignore generic file numbers and analyze the actual visual content in deep detail.
+=== 2. HIGH-PRECISION MICRO-DETAIL VISUAL ANALYSIS ===
+Inspect the artwork with microscopic scrutiny to guarantee 100% visual fidelity and individuality:
+- Exact Subject & Object Inventory: Identify and count specific visible items (e.g., "three carved jack-o-lanterns with jagged teeth, bubbling green potion cauldron, striped witch broom, dangling spider"). Never use vague placeholders like "various elements" or "halloween objects".
+- Color Palette & Lighting: Identify exact color treatments (e.g., pastel lilac and mint, high-contrast neon lime and orange, monochrome black line art, earthy terracotta and sage, warm golden amber, moody dark gothic palette with glowing accents).
+- Composition & Format Type: Distinguish the exact visual format:
+  * Seamless repeating pattern / surface textile swatch
+  * Isolated sticker sheet / element pack on clean white/neutral ground
+  * Standalone character mascot / focal scene
+  * Circular emblem / badge / typographic crest
+  * Full-bleed hero banner / background texture / border frame
+- Object Shapes & Artistry: Note silhouette and line qualities (chunky rounded contours, delicate stippling, geometric flat design, paper cutout texture, retro mid-century curves).
+- 100% Visual Accuracy: Describe ONLY what is genuinely present in the visual artwork or vector properties. Never hallucinate absent items.
 
-STRICT MICROSTOCK COMPLIANCE RULES:
-- Title: Exactly ONE clear, highly descriptive, commercial sentence (60-90 characters) describing the EXACT visual content in the image. Packed with top search keywords. Strictly NEVER include commas in the title (Adobe Stock forbids commas). No quotation marks.
-- Description: 1-2 clean sentences accurately describing the visual elements, design elements, and commercial applications.
-- Keywords: Provide EXACTLY ${targetKwCount} unique, high-ranking, buyer-focused keywords.
-  * Sort strictly in descending order of search relevance (Tags #1 to #10 must be the most exact, high-traffic terms representing the visual content, as Adobe Stock algorithms weigh the first 10 keywords most heavily).
-  * Use concise single words and 2-word phrases only.
-  * STRICTLY lowercase, no commas inside tags, no duplicates, no punctuation.
-  * NO trademarked brand names (no Apple, iPhone, Nike, Adobe, etc.).
-  * NO spam/generic negative tags (no "nobody", "no people", "no person", "white background" unless truly isolated on white).
-- Category: Accurate primary category (e.g., Graphic Resources, Transportation, Backgrounds/Textures, Abstract, Architecture, Business, Technology, Food, Lifestyle).
+=== 3. KEYWORD HIERARCHY & UNIQUE NON-REPETITIVE TAGS ===
+Provide EXACTLY ${targetKwCount} unique, high-traffic commercial tags. Adobe Stock and Shutterstock weigh the first 10 keywords most heavily.
+AVOID generic batch filler tags ("vector, illustration, graphic, design, art, background, white, isolated" dominating the top tags).
+Structure the keywords in strict descending SEO hierarchy:
+- Tier 1 (Tags 1–10 - Primary SEO Weight): Exact visual nouns and primary subjects visible in the image (e.g., "witch hat", "potion bottle", "jack o lantern", "cauldron", "black cat", "spiderweb").
+- Tier 2 (Tags 11–25 - Specific Visual Attributes & Micro-Details): Exact colors, shapes, character expressions, materials, sub-elements, and artistic style (e.g., "pastel purple", "neon orange", "bubbling liquid", "carved smile", "sticker pack", "flat design", "contour line").
+- Tier 3 (Tags 26–40 - Practical Commercial Use-Cases & Themes): Real-world buyer search intents and product applications (e.g., "halloween party", "autumn decor", "trick or treat", "scrapbooking", "textile print", "invitation card", "app icon", "stationery").
+- Tier 4 (Tags 41–${targetKwCount} - Conceptual Synonyms & Seasonal Context): Broader seasonal, mood, and industry keywords without fluff (e.g., "spooky season", "october festival", "mystical", "hand drawn aesthetic", "graphic asset").
+
+=== 4. STRICT MICROSTOCK COMPLIANCE RULES ===
+- Title: Exactly ONE clear, commercial sentence (60–90 characters optimal, max 100 characters).
+  * Packed with top relevant search keywords.
+  * STRICTLY NEVER include commas in the title (Adobe Stock forbids commas and will reject the file).
+  * No quotation marks or special punctuation.
+- Description: 1–2 clean sentences accurately detailing the visual composition, color scheme, and commercial design utility.
+- Keywords: Exactly ${targetKwCount} tags, all lowercase, single words or 2-word phrases, no commas inside tags, no duplicates, NO trademarked brand names (no Apple, Disney, Nike, etc.), NO spam/negative tags.
+- Category: Accurate primary microstock category (e.g., Graphic Resources, Backgrounds/Textures, Holidays, Animals, Food, Architecture, Business, Technology, Lifestyle).
 
 JSON Response Schema:
 {
   "title": "Clear descriptive commercial title without any commas",
-  "description": "Commercial description describing visual elements and practical microstock applications.",
+  "description": "Vivid commercial description highlighting specific visual elements, colors, and microstock design applications.",
   "keywords": ["tag1", "tag2", ...],
   "category_guess": "Graphic Resources"
 }`;
 
-    const promptText = `Analyze the content and visual design of this artwork in complete detail.
+    const promptText = `Perform high-precision visual microstock SEO analysis for this asset.
 Filename: "${filename || 'stock_media'}"
-Unique File Fingerprint (SHA256 Hash Seed): ${fileHash}
+Unique File Seed / Fingerprint: ${fileHash}
 Processing Timestamp: ${timestamp}
-${cleanSubject ? `Primary Subject: "${cleanSubject}"` : (isGeneric ? `Note: Filename "${filename}" is a generic batch label. Extract the true subject entirely from the visual artwork.` : '')}
+${cleanSubject ? `Detected Subject Context: "${cleanSubject}"` : (isGeneric ? `Note: Filename "${filename}" is a generic batch sequence. Extract the true subject entirely from the visual artwork.` : '')}
 ${isVector ? `Asset Format: Scalable Vector Graphic / Vector Artwork Asset.` : ''}
 ${vectorSemanticText ? `\n--- EMBEDDED VECTOR FILE PROPERTIES & METADATA ---\n${vectorSemanticText}\n-----------------------------------------------` : ''}
 Target Keyword Count: Exactly ${targetKwCount} unique keywords.
-${customPromptHint ? `Custom Guidance: ${customPromptHint}` : ''}
-Inspect the artwork carefully and generate premium, 100% original and content-accurate microstock SEO metadata as valid JSON.`;
+${customPromptHint ? `User Custom Guidance: ${customPromptHint}` : ''}
+
+CRITICAL ANTI-REPETITION INSTRUCTION FOR THIS ASSET:
+- Forbid formulaic openers like "Cute [Topic]..." or "Set of...".
+- Dynamically select a distinct sentence structure (Subject-first, Concept/Style-first, Use-case-first, or Object-count-first) based on the unique composition.
+- Inspect exact visual micro-details (exact items, specific color scheme, composition layout).
+- Generate exactly ${targetKwCount} hierarchically sorted tags (exact visual subjects first, then attributes, use-cases, and themes). Avoid repetitive generic fluff tags.
+- Return ONLY strictly valid JSON matching the schema with NO COMMAS in the title.`;
 
     let resultText = '';
 
