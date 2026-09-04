@@ -70,8 +70,9 @@ export function extractBoundingBox(psText: string): BoundingBox | null {
   if (!psText || psText.length < 10) return null;
 
   // EPS specifications: Document Structuring Conventions (DSC) comments are in the header.
-  const headText = psText.length > 65536 ? psText.slice(0, 65536) : psText;
-  const tailText = psText.length > 131072 ? psText.slice(-131072) : psText;
+  // Search first 1MB and last 256KB to ensure large XMP / metadata blocks never hide BoundingBox.
+  const headText = psText.length > 1048576 ? psText.slice(0, 1048576) : psText;
+  const tailText = psText.length > 262144 ? psText.slice(-262144) : psText;
 
   // Ordered strictly by precision:
   // 1. %%HiResBoundingBox (floating-point precision)
@@ -81,12 +82,16 @@ export function extractBoundingBox(psText: string): BoundingBox | null {
   // 5. %%CropBox
   // 6. %%PageBoundingBox
   const patterns = [
+    /^%%HiResBoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/im,
+    /^%%BoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/im,
+    /^%AI5_ArtBounds:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/im,
+    /^%AI3_Cropmarks:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/im,
+    /^%%CropBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/im,
+    /^%%PageBoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/im,
     /%%HiResBoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i,
     /%%BoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i,
     /%AI5_ArtBounds:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i,
     /%AI3_Cropmarks:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i,
-    /%%CropBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i,
-    /%%PageBoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i,
   ];
 
   const parseMatch = (match: RegExpMatchArray | null): BoundingBox | null => {
@@ -153,8 +158,8 @@ export function extractBoundingBox(psText: string): BoundingBox | null {
  */
 export function cmykToRgb(c: number, m: number, y: number, k: number): [number, number, number] {
   // Support percentage (0..100) or decimal (0..1)
-  const maxVal = Math.max(c || 0, m || 0, y || 0, k || 0);
-  const div = maxVal > 1.0 ? 100 : 1.0;
+  const maxVal = Math.max(Math.abs(c || 0), Math.abs(m || 0), Math.abs(y || 0), Math.abs(k || 0));
+  const div = maxVal > 1.0 ? 100.0 : 1.0;
 
   const clamp01 = (v: number) => Math.max(0, Math.min(1, isNaN(v) ? 0 : v / div));
   const cClean = clamp01(c);
@@ -167,10 +172,10 @@ export function cmykToRgb(c: number, m: number, y: number, k: number): [number, 
   let g = (1 - mClean) * (1 - kClean);
   let b = (1 - yClean) * (1 - kClean);
 
-  // Perceptual sRGB gamma curve (0.94) eliminates greyish haze and restores rich color saturation
-  r = Math.pow(r, 0.94);
-  g = Math.pow(g, 0.94);
-  b = Math.pow(b, 0.94);
+  // Perceptual sRGB gamma curve (0.95) eliminates greyish haze and restores rich color saturation
+  r = Math.pow(r, 0.95);
+  g = Math.pow(g, 0.95);
+  b = Math.pow(b, 0.95);
 
   return [
     Math.max(0, Math.min(255, Math.round(r * 255))),
@@ -349,17 +354,19 @@ export function renderPostScriptCodeToCanvas(
     // Otherwise fallback to path coordinate boundaries or standard artboard.
     if (!bbox || bbox.width <= 0 || bbox.height <= 0) {
       if (hasPathBounds) {
+        const padX = (pathMaxX - pathMinX) * 0.02;
+        const padY = (pathMaxY - pathMinY) * 0.02;
         bbox = {
-          llx: pathMinX,
-          lly: pathMinY,
-          urx: pathMaxX,
-          ury: pathMaxY,
-          width: pathMaxX - pathMinX,
-          height: pathMaxY - pathMinY,
-          minX: pathMinX,
-          minY: pathMinY,
-          maxX: pathMaxX,
-          maxY: pathMaxY,
+          llx: pathMinX - padX,
+          lly: pathMinY - padY,
+          urx: pathMaxX + padX,
+          ury: pathMaxY + padY,
+          width: (pathMaxX - pathMinX) + padX * 2,
+          height: (pathMaxY - pathMinY) + padY * 2,
+          minX: pathMinX - padX,
+          minY: pathMinY - padY,
+          maxX: pathMaxX + padX,
+          maxY: pathMaxY + padY,
         };
       } else {
         bbox = {
@@ -375,6 +382,26 @@ export function renderPostScriptCodeToCanvas(
           maxY: 800,
         };
       }
+    } else if (hasPathBounds) {
+      // If artwork coordinates extend beyond the declared BoundingBox, expand the viewport
+      // so 0% of the artwork is clipped or shifted out of frame.
+      const expandLlx = Math.min(bbox.llx, pathMinX - 2);
+      const expandLly = Math.min(bbox.lly, pathMinY - 2);
+      const expandUrx = Math.max(bbox.urx, pathMaxX + 2);
+      const expandUry = Math.max(bbox.ury, pathMaxY + 2);
+      if (
+        Math.abs(expandLlx) < 100000 &&
+        Math.abs(expandLly) < 100000 &&
+        expandUrx - expandLlx < 100000 &&
+        expandUry - expandLly < 100000
+      ) {
+        bbox.llx = expandLlx;
+        bbox.lly = expandLly;
+        bbox.urx = expandUrx;
+        bbox.ury = expandUry;
+        bbox.width = expandUrx - expandLlx;
+        bbox.height = expandUry - expandLly;
+      }
     }
 
     const srcW = Math.max(1, bbox.width);
@@ -382,22 +409,32 @@ export function renderPostScriptCodeToCanvas(
     const longestEdge = Math.max(srcW, srcH);
 
     // 4. High-DPI Resolution Scaling (Min 1280px, render at 2x or 3x scale factor)
-    const minTargetDim = Math.max(1280, targetResolution || 1536);
-    let scale = Math.max(2.0, minTargetDim / Math.max(1, longestEdge));
-    if (longestEdge * 3 <= 2560 && scale < 3.0) {
-      scale = 3.0;
+    let scale = Math.max(2.0, 1280 / longestEdge);
+    if (longestEdge <= 800) {
+      scale = Math.max(scale, 3.0);
+    }
+    if (targetResolution) {
+      scale = Math.max(scale, targetResolution / longestEdge);
     }
 
-    let canvasW = Math.max(10, Math.round(srcW * scale));
-    let canvasH = Math.max(10, Math.round(srcH * scale));
+    let canvasW = Math.max(16, Math.round(srcW * scale));
+    let canvasH = Math.max(16, Math.round(srcH * scale));
+
+    // Ensure minimum 1280px on the longest edge so fine details, text, and icons remain crystal clear
+    if (Math.max(canvasW, canvasH) < 1280) {
+      const boost = 1280 / Math.max(canvasW, canvasH);
+      scale *= boost;
+      canvasW = Math.max(16, Math.round(srcW * scale));
+      canvasH = Math.max(16, Math.round(srcH * scale));
+    }
 
     // Cap at 3072px for memory safety on mobile / low-memory containers
     const maxAllowedDim = 3072;
     if (Math.max(canvasW, canvasH) > maxAllowedDim) {
       const reduction = maxAllowedDim / Math.max(canvasW, canvasH);
       scale *= reduction;
-      canvasW = Math.max(10, Math.round(srcW * scale));
-      canvasH = Math.max(10, Math.round(srcH * scale));
+      canvasW = Math.max(16, Math.round(srcW * scale));
+      canvasH = Math.max(16, Math.round(srcH * scale));
     }
 
     const canvas = document.createElement('canvas');
@@ -406,18 +443,23 @@ export function renderPostScriptCodeToCanvas(
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
 
-    // 5. Solid White Background (#FFFFFF) - prevents alpha blending gray/faded artifacts
+    // 5. Solid White Background (#FFFFFF) explicitly filled BEFORE drawing vector paths
+    // Completely eliminates alpha blending gray/faded artifacts
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, canvasW, canvasH);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
 
     // 6. Precise BoundingBox & Viewport Calculation:
+    // Calculate exact width (urx - llx) and height (ury - lly)
     // Translate canvas origin by (-llx, -lly) with inverted Y axis for PostScript
     // This ensures 0% of the artwork is clipped or shifted out of frame.
+    const scaleX = canvasW / srcW;
+    const scaleY = canvasH / srcH;
+
     ctx.save();
     ctx.translate(0, canvasH);
-    ctx.scale(scale, -scale);
+    ctx.scale(scaleX, -scaleY);
     ctx.translate(-bbox.llx, -bbox.lly);
 
     // 7. Graphics State: Distinct Fill and Stroke styles to prevent stroke overwriting fill
@@ -427,6 +469,9 @@ export function renderPostScriptCodeToCanvas(
     let curLineWidth = 1;
     let pathDrawnCount = 0;
     let inCompoundPath = false;
+    let saveDepth = 0;
+    let currentX = 0;
+    let currentY = 0;
 
     // Helper to evaluate an operator
     const executeOp = (rawOp: string) => {
@@ -462,6 +507,8 @@ export function renderPostScriptCodeToCanvas(
           const x = parseFloat(stack.pop());
           if (!isNaN(x) && !isNaN(y)) {
             ctx.moveTo(x, y);
+            currentX = x;
+            currentY = y;
           }
           break;
         }
@@ -473,6 +520,8 @@ export function renderPostScriptCodeToCanvas(
           const x = parseFloat(stack.pop());
           if (!isNaN(x) && !isNaN(y)) {
             ctx.lineTo(x, y);
+            currentX = x;
+            currentY = y;
             pathDrawnCount++;
           }
           break;
@@ -489,6 +538,8 @@ export function renderPostScriptCodeToCanvas(
           const x1 = parseFloat(stack.pop());
           if (!isNaN(x1) && !isNaN(y1) && !isNaN(x2) && !isNaN(y2) && !isNaN(x3) && !isNaN(y3)) {
             ctx.bezierCurveTo(x1, y1, x2, y2, x3, y3);
+            currentX = x3;
+            currentY = y3;
             pathDrawnCount++;
           }
           break;
@@ -502,7 +553,10 @@ export function renderPostScriptCodeToCanvas(
           const y2 = parseFloat(stack.pop());
           const x2 = parseFloat(stack.pop());
           if (!isNaN(x2) && !isNaN(y2) && !isNaN(x3) && !isNaN(y3)) {
-            ctx.quadraticCurveTo(x2, y2, x3, y3);
+            // Cubic bezier where first control point is current point
+            ctx.bezierCurveTo(currentX, currentY, x2, y2, x3, y3);
+            currentX = x3;
+            currentY = y3;
             pathDrawnCount++;
           }
           break;
@@ -516,7 +570,10 @@ export function renderPostScriptCodeToCanvas(
           const y1 = parseFloat(stack.pop());
           const x1 = parseFloat(stack.pop());
           if (!isNaN(x1) && !isNaN(y1) && !isNaN(x3) && !isNaN(y3)) {
-            ctx.quadraticCurveTo(x1, y1, x3, y3);
+            // Cubic bezier where second control point is end point
+            ctx.bezierCurveTo(x1, y1, x3, y3, x3, y3);
+            currentX = x3;
+            currentY = y3;
             pathDrawnCount++;
           }
           break;
@@ -541,6 +598,8 @@ export function renderPostScriptCodeToCanvas(
           const x = parseFloat(stack.pop());
           if (!isNaN(x) && !isNaN(y) && !isNaN(r)) {
             ctx.arc(x, y, r, angle1, angle2, false);
+            currentX = x + r * Math.cos(angle2);
+            currentY = y + r * Math.sin(angle2);
             pathDrawnCount++;
           }
           break;
@@ -555,6 +614,8 @@ export function renderPostScriptCodeToCanvas(
           const x = parseFloat(stack.pop());
           if (!isNaN(x) && !isNaN(y) && !isNaN(r)) {
             ctx.arc(x, y, r, angle1, angle2, true);
+            currentX = x + r * Math.cos(angle2);
+            currentY = y + r * Math.sin(angle2);
             pathDrawnCount++;
           }
           break;
@@ -569,6 +630,8 @@ export function renderPostScriptCodeToCanvas(
           const x = parseFloat(stack.pop());
           if (!isNaN(x) && !isNaN(y) && !isNaN(w) && !isNaN(h)) {
             ctx.rect(x, y, w, h);
+            currentX = x;
+            currentY = y;
             pathDrawnCount++;
           }
           break;
@@ -582,6 +645,8 @@ export function renderPostScriptCodeToCanvas(
           if (!isNaN(x) && !isNaN(y) && !isNaN(w) && !isNaN(h)) {
             ctx.fillStyle = fillStyle;
             ctx.fillRect(x, y, w, h);
+            currentX = x;
+            currentY = y;
             pathDrawnCount++;
           }
           break;
@@ -596,6 +661,8 @@ export function renderPostScriptCodeToCanvas(
             ctx.strokeStyle = strokeStyle;
             ctx.lineWidth = curLineWidth;
             ctx.strokeRect(x, y, w, h);
+            currentX = x;
+            currentY = y;
             pathDrawnCount++;
           }
           break;
@@ -795,30 +862,40 @@ export function renderPostScriptCodeToCanvas(
           break;
         }
 
-        // Spot / Custom Colors in Illustrator 10
+        // Spot / Custom Colors in Illustrator (c m y k (name) tint type x / X)
         case 'x':
         case 'X':
         case '_x':
-        case '_X': {
+        case '_X':
+        case 'xx':
+        case 'XX': {
           const poppedArgs: any[] = [];
-          for (let p = 0; p < 7 && stack.length > 0; p++) {
-            const item = stack.pop();
-            poppedArgs.push(item);
-            if (typeof item === 'string' && (item.startsWith('(') || item.startsWith('/'))) {
-              break;
-            }
+          for (let p = 0; p < 9 && stack.length > 0; p++) {
+            poppedArgs.push(stack.pop());
           }
-          if (poppedArgs.length >= 4) {
-            const nums = poppedArgs.filter((v) => typeof v === 'number' || !isNaN(parseFloat(v))).map(Number);
-            if (nums.length >= 4) {
-              const [rgbR, rgbG, rgbB] = cmykToRgb(
-                nums[nums.length - 4],
-                nums[nums.length - 3],
-                nums[nums.length - 2],
-                nums[nums.length - 1]
-              );
+          let tint = 1.0;
+          const nums = poppedArgs
+            .filter((v) => typeof v === 'number' || (!isNaN(parseFloat(v)) && !String(v).startsWith('(') && !String(v).startsWith('/')))
+            .map(Number);
+
+          if (nums.length >= 4) {
+            // The last 4 numbers popped from stack are k, y, m, c
+            const k = nums[nums.length - 4];
+            const y = nums[nums.length - 3];
+            const m = nums[nums.length - 2];
+            const c = nums[nums.length - 1];
+
+            if (nums.length >= 5) {
+              const candidate = nums[0];
+              if (candidate >= 0 && candidate <= 1) {
+                tint = candidate;
+              }
+            }
+
+            if (!isNaN(c) && !isNaN(m) && !isNaN(y) && !isNaN(k)) {
+              const [rgbR, rgbG, rgbB] = cmykToRgb(c * tint, m * tint, y * tint, k * tint);
               const colStr = `rgb(${rgbR},${rgbG},${rgbB})`;
-              if (op === 'X' || op === '_X') {
+              if (op === 'X' || op === '_X' || op === 'XX') {
                 strokeStyle = colStr;
               } else {
                 fillStyle = colStr;
@@ -885,13 +962,17 @@ export function renderPostScriptCodeToCanvas(
         case 'q':
         case '_q':
         case 'gsave':
+          saveDepth++;
           ctx.save();
           break;
 
         case 'Q':
         case '_Q':
         case 'grestore':
-          ctx.restore();
+          if (saveDepth > 0) {
+            saveDepth--;
+            ctx.restore();
+          }
           break;
 
         case 'translate': {
@@ -1017,6 +1098,10 @@ export function renderPostScriptCodeToCanvas(
       executeOp(tok);
     }
 
+    while (saveDepth > 0) {
+      ctx.restore();
+      saveDepth--;
+    }
     ctx.restore();
 
     // 8. Quality check: Verify canvas has visible artwork (not blank white)

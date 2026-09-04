@@ -203,7 +203,7 @@ export const EditDrawer: React.FC<EditDrawerProps> = ({
         {/* Scrollable Content Body */}
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
           {/* Media Preview Stage */}
-          <div className="w-full h-48 rounded-xl bg-zinc-100 dark:bg-zinc-950 border border-zinc-200 dark:border-white/[0.06] overflow-hidden flex items-center justify-center relative shadow-inner">
+          <div className="w-full h-48 rounded-xl bg-white border border-zinc-200 dark:border-zinc-700 overflow-hidden flex items-center justify-center relative shadow-inner">
             {file.previewUrl ? (
               <img
                 src={file.previewUrl}

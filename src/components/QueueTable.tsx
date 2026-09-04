@@ -223,7 +223,7 @@ export const QueueTable: React.FC<QueueTableProps> = ({
 
                   {/* Thumbnail Preview */}
                   <td className="py-3 px-2.5">
-                    <div className="w-10 h-10 shrink-0 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-white/[0.08] overflow-hidden flex items-center justify-center relative shadow-2xs aspect-square">
+                    <div className="w-10 h-10 shrink-0 rounded-lg bg-white border border-zinc-200 dark:border-zinc-700 overflow-hidden flex items-center justify-center relative shadow-2xs aspect-square">
                       {file.previewUrl ? (
                         <img
                           src={file.previewUrl}

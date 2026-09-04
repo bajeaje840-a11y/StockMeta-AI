@@ -654,6 +654,8 @@ export async function extractTiffFromBinaryEps(
       const view = new DataView(headerBuffer);
       const psOffset = view.getUint32(4, true);
       const psLength = view.getUint32(8, true);
+      const wmfOffset = view.getUint32(12, true);
+      const wmfLength = view.getUint32(16, true);
       const tiffOffset = view.getUint32(20, true);
       const tiffLength = view.getUint32(24, true);
 
@@ -672,7 +674,7 @@ export async function extractTiffFromBinaryEps(
           if (tiffBytes[0] === 0xFF && tiffBytes[1] === 0xD8 && tiffBytes[2] === 0xFF) {
             const blob = new Blob([tiffBuffer], { type: 'image/jpeg' });
             const url = URL.createObjectURL(blob);
-            const rasterized = await validateAndRasterizeImage(url, 1200);
+            const rasterized = await validateAndRasterizeImage(url, 1280);
             URL.revokeObjectURL(url);
             if (rasterized) {
               return {
@@ -709,39 +711,7 @@ export async function extractTiffFromBinaryEps(
                     );
                     ctx.putImageData(imgData, 0, 0);
 
-                    // If TIFF is low resolution (< 600px) and a PostScript slice exists, try PostScript vector interpreter first
-                    if ((w < 600 || h < 600) && psOffset > 0 && psOffset < file.size) {
-                      try {
-                        const psEnd =
-                          psLength > 0 && psLength !== 0xffffffff && psOffset + psLength <= file.size
-                            ? psOffset + psLength
-                            : file.size;
-                        const psBuffer = await file.slice(psOffset, psEnd).arrayBuffer();
-                        const textDecoder = new TextDecoder('latin1');
-                        const psText = textDecoder.decode(psBuffer);
-
-                        // Try PDF stream first
-                        const pdfIdx = psText.indexOf('%PDF-');
-                        if (pdfIdx !== -1) {
-                          const renderedPdf = await renderPdfBufferToCanvas(psBuffer.slice(pdfIdx));
-                          if (renderedPdf) return renderedPdf;
-                        }
-
-                        // Try High-DPI PostScript canvas interpreter
-                        const psCanvas = renderPostScriptCodeToCanvas(psText, 1536);
-                        if (psCanvas && psCanvas.base64Data) {
-                          return {
-                            previewUrl: psCanvas.previewUrl,
-                            base64Data: psCanvas.base64Data,
-                            mimeTypeForAi: psCanvas.mimeTypeForAi,
-                          };
-                        }
-                      } catch (psSliceErr) {
-                        console.warn('PostScript slice render before low-res TIFF exception:', psSliceErr);
-                      }
-                    }
-
-                    // Render over pure white background
+                    // Render over pure solid white background (#FFFFFF) to eliminate gray/faded artifacts
                     const finalCanvas = document.createElement('canvas');
                     finalCanvas.width = w;
                     finalCanvas.height = h;
@@ -751,7 +721,7 @@ export async function extractTiffFromBinaryEps(
                       fCtx.fillRect(0, 0, w, h);
                       fCtx.drawImage(canvas, 0, 0);
 
-                      const jpegUrl = finalCanvas.toDataURL('image/jpeg', 0.90);
+                      const jpegUrl = finalCanvas.toDataURL('image/jpeg', 0.92);
                       const b64 = jpegUrl.split(',')[1];
                       if (b64 && b64.length > 50) {
                         return {
@@ -768,6 +738,42 @@ export async function extractTiffFromBinaryEps(
           } catch (utifErr) {
             console.warn('UTIF decode exception for EPS TIFF preview:', utifErr);
           }
+        }
+      }
+
+      // 1b. Try WMF preview / embedded JPEG in WMF section
+      if (wmfOffset > 0 && wmfOffset < file.size) {
+        try {
+          const actualWmfEnd =
+            wmfLength > 0 && wmfOffset + wmfLength <= file.size
+              ? wmfOffset + wmfLength
+              : Math.min(file.size, wmfOffset + 10 * 1024 * 1024);
+
+          if (actualWmfEnd - wmfOffset > 50) {
+            const wmfBuffer = await file.slice(wmfOffset, actualWmfEnd).arrayBuffer();
+            const wmfBytes = new Uint8Array(wmfBuffer);
+
+            // Scan for embedded JPEG in WMF section
+            for (let i = 0; i < wmfBytes.length - 4; i++) {
+              if (wmfBytes[i] === 0xFF && wmfBytes[i + 1] === 0xD8 && wmfBytes[i + 2] === 0xFF) {
+                const jpegSlice = wmfBuffer.slice(i);
+                const blob = new Blob([jpegSlice], { type: 'image/jpeg' });
+                const url = URL.createObjectURL(blob);
+                const rasterized = await validateAndRasterizeImage(url, 1280);
+                URL.revokeObjectURL(url);
+                if (rasterized) {
+                  return {
+                    previewUrl: rasterized.previewUrl,
+                    base64Data: rasterized.base64Data,
+                    mimeTypeForAi: 'image/jpeg',
+                  };
+                }
+                break;
+              }
+            }
+          }
+        } catch (wmfErr) {
+          console.warn('WMF preview extraction exception:', wmfErr);
         }
       }
 
@@ -1783,70 +1789,109 @@ export async function prepareFileForAi(file: File): Promise<{
       }
 
       try {
-        // 1st Priority: Embedded Native Vector Streams (AI Private Data PDF / raw PDF / high-res JPEG streams)
-        const streamExtracted = await extractEmbeddedImageFromVector(file);
-        if (streamExtracted && streamExtracted.base64Data) {
-          return {
-            ...streamExtracted,
-            isRealArtworkPreview: true,
-            vectorSemanticText,
-            cleanSubject,
-          };
-        }
+        if (ext === 'eps') {
+          // --- EPS RENDERING ENGINE ---
+          // 1st Priority: Overhauled Client-Side PostScript Vector Interpreter
+          // (High-DPI min 1280px, exact BoundingBox (-llx, -lly), solid white canvas, CMYK-to-sRGB)
+          if (file.size <= 30 * 1024 * 1024) {
+            try {
+              let psText = '';
+              const headerBuffer = await file.slice(0, 32).arrayBuffer();
+              const headerBytes = new Uint8Array(headerBuffer);
+              const isBinaryEps =
+                headerBytes.length >= 32 &&
+                headerBytes[0] === 0xC5 &&
+                headerBytes[1] === 0xD0 &&
+                headerBytes[2] === 0xD3 &&
+                headerBytes[3] === 0xC6;
 
-        // 2nd Priority: Pure Client-Side PostScript Vector Interpreter (High-DPI 1536px, full-frame, CMYK-accurate)
-        // Interprets PostScript/Illustrator paths, CMYK/RGB colors, transforms, and compound shapes
-        if (file.size <= 25 * 1024 * 1024) {
-          try {
-            const sliceSize = Math.min(file.size, 12 * 1024 * 1024);
-            const buffer = await file.slice(0, sliceSize).arrayBuffer();
-            const textDecoder = new TextDecoder('latin1');
-            let psText = textDecoder.decode(buffer);
+              if (isBinaryEps) {
+                const view = new DataView(headerBuffer);
+                const psOffset = view.getUint32(4, true);
+                const psLength = view.getUint32(8, true);
+                if (psOffset > 0 && psOffset < file.size) {
+                  const psEnd =
+                    psLength > 0 && psLength !== 0xffffffff && psOffset + psLength <= file.size
+                      ? psOffset + psLength
+                      : Math.min(file.size, psOffset + 16 * 1024 * 1024);
+                  const psBuffer = await file.slice(psOffset, psEnd).arrayBuffer();
+                  psText = new TextDecoder('latin1').decode(psBuffer);
+                }
+              } else {
+                const sliceSize = Math.min(file.size, 16 * 1024 * 1024);
+                const buffer = await file.slice(0, sliceSize).arrayBuffer();
+                const textDecoder = new TextDecoder('latin1');
+                psText = textDecoder.decode(buffer);
+                if (file.size > sliceSize) {
+                  const tailSize = Math.min(file.size, 128 * 1024);
+                  const tailBuf = await file.slice(file.size - tailSize).arrayBuffer();
+                  psText += '\n%%Trailer\n' + textDecoder.decode(tailBuf);
+                }
+              }
 
-            // Append trailer if file is larger than sliceSize to ensure %%BoundingBox or %%HiResBoundingBox in trailer is captured
-            if (file.size > sliceSize) {
-              const tailSize = Math.min(file.size, 128 * 1024);
-              const tailBuf = await file.slice(file.size - tailSize).arrayBuffer();
-              psText += '\n%%Trailer\n' + textDecoder.decode(tailBuf);
+              if (psText && psText.length > 20) {
+                const psCanvasRes = renderPostScriptCodeToCanvas(psText, 1536);
+                if (psCanvasRes && psCanvasRes.base64Data) {
+                  return {
+                    ...psCanvasRes,
+                    isRealArtworkPreview: true,
+                    vectorSemanticText,
+                    cleanSubject,
+                  };
+                }
+              }
+            } catch (psErr) {
+              console.warn('Primary PostScript canvas rendering error:', psErr);
             }
+          }
 
-            const psCanvasRes = renderPostScriptCodeToCanvas(psText, 1536);
-            if (psCanvasRes && psCanvasRes.base64Data) {
-              return {
-                ...psCanvasRes,
-                isRealArtworkPreview: true,
-                vectorSemanticText,
-                cleanSubject,
-              };
-            }
-          } catch (psErr) {
-            console.warn('Client PostScript canvas interpreter fallback:', psErr);
+          // 2nd Priority (Robust Fallback): Binary EPS Header embedded preview (TIFF / WMF / JPEG)
+          const tiffExtracted = await extractTiffFromBinaryEps(file);
+          if (tiffExtracted && tiffExtracted.base64Data) {
+            return {
+              ...tiffExtracted,
+              isRealArtworkPreview: true,
+              vectorSemanticText,
+              cleanSubject,
+            };
+          }
+
+          // 3rd Priority (Fallback): Embedded Native Vector Streams (AI Private Data PDF / raw PDF / JPEG streams)
+          const streamExtracted = await extractEmbeddedImageFromVector(file);
+          if (streamExtracted && streamExtracted.base64Data) {
+            return {
+              ...streamExtracted,
+              isRealArtworkPreview: true,
+              vectorSemanticText,
+              cleanSubject,
+            };
+          }
+
+          // 4th Priority (Fallback): Embedded XMP Thumbnail extraction
+          const xmpExtracted = await extractEmbeddedXmpThumbnail(file);
+          if (xmpExtracted && xmpExtracted.base64Data) {
+            return {
+              ...xmpExtracted,
+              isRealArtworkPreview: true,
+              vectorSemanticText,
+              cleanSubject,
+            };
+          }
+        } else {
+          // --- AI & PDF VECTOR ENGINE ---
+          // 1st Priority: Native PDF vector stream extraction via PDF.js
+          const streamExtracted = await extractEmbeddedImageFromVector(file);
+          if (streamExtracted && streamExtracted.base64Data) {
+            return {
+              ...streamExtracted,
+              isRealArtworkPreview: true,
+              vectorSemanticText,
+              cleanSubject,
+            };
           }
         }
 
-        // 3rd Priority: Binary EPS Header TIFF check (decodes embedded TIFF or JPEG with UTIF or native canvas)
-        const tiffExtracted = await extractTiffFromBinaryEps(file);
-        if (tiffExtracted && tiffExtracted.base64Data) {
-          return {
-            ...tiffExtracted,
-            isRealArtworkPreview: true,
-            vectorSemanticText,
-            cleanSubject,
-          };
-        }
-
-        // 4th Priority: Embedded XMP Thumbnail extraction (zero server dependencies)
-        const xmpExtracted = await extractEmbeddedXmpThumbnail(file);
-        if (xmpExtracted && xmpExtracted.base64Data) {
-          return {
-            ...xmpExtracted,
-            isRealArtworkPreview: true,
-            vectorSemanticText,
-            cleanSubject,
-          };
-        }
-
-        // 5th Priority: Server-Side Vector Rendering (Optional fallback, strictly guarded to < 4MB for Vercel payload limits)
+        // Server-Side Vector Rendering (Optional fallback, strictly guarded to < 4MB for Vercel payload limits)
         if (file.size <= 4 * 1024 * 1024) {
           try {
             const serverRendered = await renderVectorViaServer(file);
