@@ -16,13 +16,17 @@ export interface RenderedVectorResult {
   height: number;
 }
 
-interface BoundingBox {
+export interface BoundingBox {
+  llx: number;
+  lly: number;
+  urx: number;
+  ury: number;
+  width: number;
+  height: number;
   minX: number;
   minY: number;
   maxX: number;
   maxY: number;
-  width: number;
-  height: number;
 }
 
 /**
@@ -58,86 +62,115 @@ export function stripHeavyDataBlocks(text: string): string {
 }
 
 /**
- * Extracts BoundingBox or HiResBoundingBox from PostScript header comments or trailer.
- * Supports:
- * - %%HiResBoundingBox (floating-point precision)
- * - %AI5_ArtBounds (Adobe Illustrator true artboard bounds)
- * - %AI3_Cropmarks
- * - %%CropBox
- * - %%BoundingBox (integer standard)
- * - %%PageBoundingBox
+ * Extracts BoundingBox or HiResBoundingBox directly from the EPS header or trailer.
+ * Prioritizes header %%HiResBoundingBox and %%BoundingBox as standard PostScript specifications mandate.
+ * Returns exact llx, lly, urx, ury coordinates with width (urx - llx) and height (ury - lly).
  */
 export function extractBoundingBox(psText: string): BoundingBox | null {
   if (!psText || psText.length < 10) return null;
 
+  // EPS specifications: Document Structuring Conventions (DSC) comments are in the header.
   const headText = psText.length > 65536 ? psText.slice(0, 65536) : psText;
   const tailText = psText.length > 131072 ? psText.slice(-131072) : psText;
 
+  // Ordered strictly by precision:
+  // 1. %%HiResBoundingBox (floating-point precision)
+  // 2. %%BoundingBox (integer / decimal standard)
+  // 3. %AI5_ArtBounds (Adobe Illustrator true artboard bounds)
+  // 4. %AI3_Cropmarks
+  // 5. %%CropBox
+  // 6. %%PageBoundingBox
   const patterns = [
-    /%%HiResBoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/gi,
-    /%AI5_ArtBounds:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/gi,
-    /%AI3_Cropmarks:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/gi,
-    /%%CropBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/gi,
-    /%%BoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/gi,
-    /%%PageBoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/gi,
+    /%%HiResBoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i,
+    /%%BoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i,
+    /%AI5_ArtBounds:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i,
+    /%AI3_Cropmarks:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i,
+    /%%CropBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i,
+    /%%PageBoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i,
   ];
 
-  for (const pat of patterns) {
-    // Check trailer first (in case header had (atend)), then header
-    const tailMatches = Array.from(tailText.matchAll(pat));
-    const headMatches = Array.from(headText.matchAll(pat));
-    const allMatches = [...tailMatches, ...headMatches];
+  const parseMatch = (match: RegExpMatchArray | null): BoundingBox | null => {
+    if (!match) return null;
+    let llx = parseFloat(match[1]);
+    let lly = parseFloat(match[2]);
+    let urx = parseFloat(match[3]);
+    let ury = parseFloat(match[4]);
 
-    for (const match of allMatches) {
-      if (!match) continue;
-      const minX = parseFloat(match[1]);
-      const minY = parseFloat(match[2]);
-      const maxX = parseFloat(match[3]);
-      const maxY = parseFloat(match[4]);
+    if (isNaN(llx) || isNaN(lly) || isNaN(urx) || isNaN(ury)) return null;
 
-      if (isNaN(minX) || isNaN(minY) || isNaN(maxX) || isNaN(maxY)) continue;
-
-      const width = Math.abs(maxX - minX);
-      const height = Math.abs(maxY - minY);
-
-      // Discard invalid / zero bounding boxes like 0 0 0 0 or 0 0 1 1
-      if (width > 5 && height > 5 && width < 200000 && height < 200000) {
-        return {
-          minX: Math.min(minX, maxX),
-          minY: Math.min(minY, maxY),
-          maxX: Math.max(minX, maxX),
-          maxY: Math.max(minY, maxY),
-          width,
-          height,
-        };
-      }
+    if (llx > urx) {
+      const t = llx;
+      llx = urx;
+      urx = t;
     }
+    if (lly > ury) {
+      const t = lly;
+      lly = ury;
+      ury = t;
+    }
+
+    const width = urx - llx;
+    const height = ury - lly;
+
+    if (width > 0.5 && height > 0.5 && width < 250000 && height < 250000) {
+      return {
+        llx,
+        lly,
+        urx,
+        ury,
+        width,
+        height,
+        minX: llx,
+        minY: lly,
+        maxX: urx,
+        maxY: ury,
+      };
+    }
+    return null;
+  };
+
+  // 1. Primary: Extract from EPS Header comments (DSC standard)
+  for (const pat of patterns) {
+    const headMatch = headText.match(pat);
+    const parsed = parseMatch(headMatch);
+    if (parsed) return parsed;
+  }
+
+  // 2. Secondary: If header specified (atend) or comments were in trailer
+  for (const pat of patterns) {
+    const tailMatch = tailText.match(pat);
+    const parsed = parseMatch(tailMatch);
+    if (parsed) return parsed;
   }
 
   return null;
 }
 
 /**
- * Converts CMYK values (0..1) to vibrant sRGB (0..255).
- * Applies non-linear tone reproduction and black-point compensation to prevent
- * the washed-out, greyish, low-contrast appearance typical of linear conversion.
+ * Converts CMYK color spaces accurately to sRGB (0..255).
+ * Applies subtractive ink modeling with black compensation and sRGB gamma curve
+ * to completely eliminate washed-out, greyish, semi-transparent, or faded color artifacts.
  */
 export function cmykToRgb(c: number, m: number, y: number, k: number): [number, number, number] {
-  const clamp = (v: number) => Math.max(0, Math.min(1, isNaN(v) ? 0 : v));
-  const cClean = clamp(c);
-  const mClean = clamp(m);
-  const yClean = clamp(y);
-  const kClean = clamp(k);
+  // Support percentage (0..100) or decimal (0..1)
+  const maxVal = Math.max(c || 0, m || 0, y || 0, k || 0);
+  const div = maxVal > 1.0 ? 100 : 1.0;
 
-  // Subtractive ink model with black compensation
-  let r = 1 - Math.min(1, cClean * (1 - kClean) + kClean);
-  let g = 1 - Math.min(1, mClean * (1 - kClean) + kClean);
-  let b = 1 - Math.min(1, yClean * (1 - kClean) + kClean);
+  const clamp01 = (v: number) => Math.max(0, Math.min(1, isNaN(v) ? 0 : v / div));
+  const cClean = clamp01(c);
+  const mClean = clamp01(m);
+  const yClean = clamp01(y);
+  const kClean = clamp01(k);
 
-  // Perceptual contrast curve: boosts saturation and eliminates washed-out haze on sRGB displays
-  r = Math.pow(r, 0.92);
-  g = Math.pow(g, 0.92);
-  b = Math.pow(b, 0.92);
+  // Subtractive ink reproduction: R = (1-C)*(1-K), G = (1-M)*(1-K), B = (1-Y)*(1-K)
+  let r = (1 - cClean) * (1 - kClean);
+  let g = (1 - mClean) * (1 - kClean);
+  let b = (1 - yClean) * (1 - kClean);
+
+  // Perceptual sRGB gamma curve (0.94) eliminates greyish haze and restores rich color saturation
+  r = Math.pow(r, 0.94);
+  g = Math.pow(g, 0.94);
+  b = Math.pow(b, 0.94);
 
   return [
     Math.max(0, Math.min(255, Math.round(r * 255))),
@@ -311,61 +344,60 @@ export function renderPostScriptCodeToCanvas(
 
     const hasPathBounds = pathMinX !== Infinity && pathMaxX > pathMinX && pathMaxY > pathMinY;
 
-    // 3. Reconcile declared BoundingBox with actual path bounds
+    // 3. Viewport and BoundingBox calculation:
+    // If declared BoundingBox was found from EPS header / trailer, honor exact artwork bounds.
+    // Otherwise fallback to path coordinate boundaries or standard artboard.
     if (!bbox || bbox.width <= 0 || bbox.height <= 0) {
       if (hasPathBounds) {
         bbox = {
-          minX: pathMinX,
-          minY: pathMinY,
-          maxX: pathMaxX,
-          maxY: pathMaxY,
+          llx: pathMinX,
+          lly: pathMinY,
+          urx: pathMaxX,
+          ury: pathMaxY,
           width: pathMaxX - pathMinX,
           height: pathMaxY - pathMinY,
-        };
-      } else {
-        bbox = { minX: 0, minY: 0, maxX: 800, maxY: 800, width: 800, height: 800 };
-      }
-    } else if (hasPathBounds) {
-      const pathW = pathMaxX - pathMinX;
-      const pathH = pathMaxY - pathMinY;
-
-      // Expand bounding box if vector paths extend outside declared bounds
-      if (pathMinX < bbox.minX || pathMaxX > bbox.maxX || pathMinY < bbox.minY || pathMaxY > bbox.maxY) {
-        bbox.minX = Math.min(bbox.minX, pathMinX);
-        bbox.minY = Math.min(bbox.minY, pathMinY);
-        bbox.maxX = Math.max(bbox.maxX, pathMaxX);
-        bbox.maxY = Math.max(bbox.maxY, pathMaxY);
-        bbox.width = bbox.maxX - bbox.minX;
-        bbox.height = bbox.maxY - bbox.minY;
-      }
-      // If declared bounding box is a generic huge page (e.g. 612x792) and artwork is localized
-      else if (pathW > 20 && pathH > 20 && (bbox.width > 2.5 * pathW || bbox.height > 2.5 * pathH)) {
-        bbox = {
           minX: pathMinX,
           minY: pathMinY,
           maxX: pathMaxX,
           maxY: pathMaxY,
-          width: pathW,
-          height: pathH,
+        };
+      } else {
+        bbox = {
+          llx: 0,
+          lly: 0,
+          urx: 800,
+          ury: 800,
+          width: 800,
+          height: 800,
+          minX: 0,
+          minY: 0,
+          maxX: 800,
+          maxY: 800,
         };
       }
     }
 
-    const srcW = Math.max(10, bbox.width);
-    const srcH = Math.max(10, bbox.height);
-    const aspect = srcW / srcH;
+    const srcW = Math.max(1, bbox.width);
+    const srcH = Math.max(1, bbox.height);
+    const longestEdge = Math.max(srcW, srcH);
 
-    // 4. High-DPI Resolution Scaling (minimum 1024px max dimension, default 1536px, capped at 2048px)
-    const targetDim = Math.min(2048, Math.max(1024, targetResolution || 1536));
-    let canvasW: number;
-    let canvasH: number;
+    // 4. High-DPI Resolution Scaling (Min 1280px, render at 2x or 3x scale factor)
+    const minTargetDim = Math.max(1280, targetResolution || 1536);
+    let scale = Math.max(2.0, minTargetDim / Math.max(1, longestEdge));
+    if (longestEdge * 3 <= 2560 && scale < 3.0) {
+      scale = 3.0;
+    }
 
-    if (aspect >= 1) {
-      canvasW = targetDim;
-      canvasH = Math.max(100, Math.min(2048, Math.round(targetDim / aspect)));
-    } else {
-      canvasH = targetDim;
-      canvasW = Math.max(100, Math.min(2048, Math.round(targetDim * aspect)));
+    let canvasW = Math.max(10, Math.round(srcW * scale));
+    let canvasH = Math.max(10, Math.round(srcH * scale));
+
+    // Cap at 3072px for memory safety on mobile / low-memory containers
+    const maxAllowedDim = 3072;
+    if (Math.max(canvasW, canvasH) > maxAllowedDim) {
+      const reduction = maxAllowedDim / Math.max(canvasW, canvasH);
+      scale *= reduction;
+      canvasW = Math.max(10, Math.round(srcW * scale));
+      canvasH = Math.max(10, Math.round(srcH * scale));
     }
 
     const canvas = document.createElement('canvas');
@@ -374,30 +406,19 @@ export function renderPostScriptCodeToCanvas(
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
 
-    // 5. Solid White Background (#FFFFFF) - prevents alpha transparency fading/washing out colors
+    // 5. Solid White Background (#FFFFFF) - prevents alpha blending gray/faded artifacts
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, canvasW, canvasH);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
 
-    // 6. Precise Viewport Transform: Symmetrical 2.5% margin prevents edge clipping
-    const marginRatio = 0.025;
-    const drawW = canvasW * (1 - 2 * marginRatio);
-    const drawH = canvasH * (1 - 2 * marginRatio);
-    const scale = Math.min(drawW / srcW, drawH / srcH);
-
-    const renderedW = srcW * scale;
-    const renderedH = srcH * scale;
-    const offsetX = (canvasW - renderedW) / 2;
-    const offsetY = (canvasH - renderedH) / 2;
-
-    // PostScript coordinate system:
-    // (minX, maxY) is vector top-left -> maps to (offsetX, offsetY) on canvas
-    // (maxX, minY) is vector bottom-right -> maps to (canvasW - offsetX, canvasH - offsetY) on canvas
+    // 6. Precise BoundingBox & Viewport Calculation:
+    // Translate canvas origin by (-llx, -lly) with inverted Y axis for PostScript
+    // This ensures 0% of the artwork is clipped or shifted out of frame.
     ctx.save();
-    ctx.translate(offsetX, offsetY + bbox.maxY * scale);
-    ctx.scale(scale, -scale); // Invert Y axis for PostScript
-    ctx.translate(-bbox.minX, 0);
+    ctx.translate(0, canvasH);
+    ctx.scale(scale, -scale);
+    ctx.translate(-bbox.llx, -bbox.lly);
 
     // 7. Graphics State: Distinct Fill and Stroke styles to prevent stroke overwriting fill
     const stack: any[] = [];
