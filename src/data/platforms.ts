@@ -197,10 +197,28 @@ export const DEFAULT_TRADEMARK_BLOCKLIST: string[] = [
 ];
 
 /**
-  * Helper to guess Adobe Stock Numeric Category from string category
+  * Helper to guess Adobe Stock Numeric Category from string category or number
   */
-export function mapToAdobeCategory(categoryGuess: string, titleAndKeywords: string): number {
-  const text = (categoryGuess + ' ' + titleAndKeywords).toLowerCase();
+export function mapToAdobeCategory(categoryGuess: string | number, titleAndKeywords: string = ''): number {
+  if (typeof categoryGuess === 'number' && categoryGuess >= 1 && categoryGuess <= 21) {
+    return categoryGuess;
+  }
+  const str = String(categoryGuess || '').trim();
+  const num = parseInt(str, 10);
+  if (!isNaN(num) && num >= 1 && num <= 21) return num;
+
+  const lowerStr = str.toLowerCase();
+  const exactMatch = ADOBE_STOCK_CATEGORIES.find(
+    (c) => c.name.toLowerCase() === lowerStr || lowerStr === c.name.toLowerCase().replace(/\s+and\s+/g, ' & ')
+  );
+  if (exactMatch) return exactMatch.id;
+
+  const partialMatch = ADOBE_STOCK_CATEGORIES.find(
+    (c) => lowerStr.includes(c.name.toLowerCase()) || c.name.toLowerCase().includes(lowerStr)
+  );
+  if (partialMatch) return partialMatch.id;
+
+  const text = (lowerStr + ' ' + titleAndKeywords).toLowerCase();
 
   if (text.includes('animal') || text.includes('dog') || text.includes('cat') || text.includes('bird') || text.includes('pet') || text.includes('wildlife')) return 1;
   if (text.includes('building') || text.includes('architecture') || text.includes('city') || text.includes('house') || text.includes('urban') || text.includes('construction')) return 2;
@@ -224,7 +242,7 @@ export function mapToAdobeCategory(categoryGuess: string, titleAndKeywords: stri
   if (text.includes('transport') || text.includes('car') || text.includes('vehicle') || text.includes('plane') || text.includes('train') || text.includes('traffic')) return 20;
   if (text.includes('travel') || text.includes('vacation') || text.includes('tourism') || text.includes('passport') || text.includes('flight') || text.includes('destination')) return 21;
 
-  // Default to Graphic Resources (8) or General Lifestyle (12) or People (13)
+  // Default to Graphic Resources (8)
   return 8;
 }
 

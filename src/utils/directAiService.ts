@@ -48,6 +48,8 @@ export function sanitizeMicrostockMetadata(parsed: any, filename: string): {
   title: string;
   description: string;
   keywords: string[];
+  category: string;
+  category_id?: number;
   category_guess: string;
 } {
   let title = (parsed.title || filename.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ')).trim();
@@ -55,14 +57,14 @@ export function sanitizeMicrostockMetadata(parsed: any, filename: string): {
   if (title.length > 100) {
     title = title.substring(0, 100).trim();
     const lastSpace = title.lastIndexOf(' ');
-    if (lastSpace > 50) {
+    if (lastSpace > 60) {
       title = title.substring(0, lastSpace).trim();
     }
   }
 
   let description = (parsed.description || title).trim();
-  if (description.length > 200) {
-    description = description.substring(0, 200).trim();
+  if (description.length > 250) {
+    description = description.substring(0, 250).trim();
   }
 
   const blocklistSet = new Set([
@@ -103,12 +105,17 @@ export function sanitizeMicrostockMetadata(parsed: any, filename: string): {
 
   // Cap at 49 tags for Adobe Stock / microstock standard
   const finalKeywords = sanitizedKeywords.slice(0, 49);
+  const rawCat = parsed.category || parsed.category_guess || parsed.adobe_category || 'Graphic Resources';
+  const categoryName = typeof rawCat === 'string' ? rawCat.trim() : 'Graphic Resources';
+  const categoryId = typeof parsed.category_id === 'number' ? parsed.category_id : undefined;
 
   return {
     title: title || 'High Quality Stock Media Asset',
     description: description || title,
     keywords: finalKeywords,
-    category_guess: parsed.category_guess || 'Graphic Resources',
+    category: categoryName,
+    category_id: categoryId,
+    category_guess: categoryName,
   };
 }
 
@@ -531,61 +538,68 @@ export async function generateGeminiMetadataDirectly(options: {
   const promptText = `You are a world-class Senior AI Prompt Engineer & Microstock SEO Specialist for Adobe Stock, Shutterstock, Freepik, Getty Images, and Vecteezy.
 Analyze the provided visual asset (photo, texture, vector illustration, icon set, seamless pattern, 3D render, or graphic) in extreme visual detail and generate high-converting, strictly compliant commercial SEO metadata in valid JSON format.
 
-=== 1. DYNAMIC SENTENCE ARCHITECTURE & ANTI-REPETITION (STRICT MANDATE) ===
-Microstock platforms strictly penalize and reject portfolio batches containing repetitive, formulaic, or templated titles.
-- STRICTLY FORBIDDEN PREFIX FORMULAS & CLICHÉS:
-  * NEVER start consecutive items or multiple assets in a batch with the same phrase or prefix.
-  * BANNED OPENERS: Never begin titles with repetitive clichés such as:
-    - "Autumn harvest..." / "Harvest autumn..." / "Autumn celebration..."
-    - "Happy Thanksgiving..." / "Thanksgiving celebration..." / "Thanksgiving holiday..."
-    - "Autumn border..." / "Fall border..." / "Autumn frame..." / "Thanksgiving frame..."
-    - "Fall background..." / "Autumn background..." / "Thanksgiving background..."
-    - "Cute [topic]..." / "Cute cartoon..." / "Adorable..." / "A cute..."
-    - "Set of..." / "A set of..." / "Collection of..." / "Pack of..."
-    - "Vector illustration of..." / "Illustration of..." / "Graphic of..." / "Isolated..."
-    - "Vibrant...", "Beautiful...", "Festive...", "Holiday..."
-  * If terms like "autumn", "thanksgiving", "cute", or "vector" are relevant, weave them naturally into the middle or modifier position of the title—NEVER as the repetitive opening word.
-  * Every single asset in a batch MUST have a distinct, human-crafted opening phrasing.
-
-- RANDOMIZE AND ROTATE SENTENCE ENTRY POINTS (MANDATORY):
-  You MUST randomize and dynamically alternate sentence entry points across every single image based on unique composition and file fingerprint (Seed: ${fileHash.slice(0, 8)}). Do NOT repeat the same structure. Rotate across these 5 distinct architectures:
-  * Entry Point 1 (Object/Detail First): Lead with concrete focal subjects, specific botanical varieties, or tangible items first.
-    -> Example: "Pomegranates Walnuts and Gourds Arranged on Rustic Wood"
-  * Entry Point 2 (Layout/Composition First): Lead with perspective, camera angle, framing, or spatial layout first.
-    -> Example: "Top Down Flat Lay of Golden Maple Leaves with Copy Space"
-  * Entry Point 3 (Artistic Style First): Lead with specific rendering technique, artistic medium, or visual treatment first.
-    -> Example: "Watercolor Botanical Frame Featuring Orange Pumpkins and Foliage"
-  * Entry Point 4 (Concept/Mood First): Lead with thematic concept, seasonal atmosphere, or emotional celebration first.
-    -> Example: "Warm Harvest Season Celebration Concept with Pinecones"
-  * Entry Point 5 (Color/Texture First): Lead with surface background, dominant color palette, or material texture first.
-    -> Example: "Dark Purple Background Framed with Seasonal Fall Produce"
+=== 1. EXPANDED SEO TITLES (TARGET: 80–100 CHARACTERS, MAX 100 CHARACTERS) ===
+Microstock platforms (especially Adobe Stock & Shutterstock) prioritize descriptive, high-density titles that accurately capture visual nuance while maintaining strict compliance.
+- TARGET LENGTH: Rich, highly descriptive title between 80 and 100 characters (strictly max 100 characters). Do NOT produce brief, generic 30-50 character titles.
+- RICH VISUAL DETAIL DENSITY: Pack the title with specific visual attributes:
+  * Exact Subject & Focus: Concrete subject nouns and visual items.
+  * Art Style & Technique: 3D render, watercolor painting, flat vector illustration, macro photography, isometric vector, linocut print, top down flat lay, etc.
+  * Color Scheme & Palette: Dominant hues, lighting tone, background contrast (e.g., golden warm palette, dark chalkboard ground, pastel aesthetic).
+  * Composition & Texture: Framing, perspective, surface materials (e.g., rustic wood texture, marble table, isolated white background, copy space).
+  * Design & Buyer Use Cases: Commercial utility and theme (e.g., banner design, holiday celebration, culinary menu, corporate concept).
+- STRICT FORBIDDEN PUNCTUATION (CRITICAL FOR ADOBE STOCK):
+  * STRICTLY NEVER include commas (,) in the title. Adobe Stock will reject files with commas in titles. Use "and", "with", "for", "featuring", or natural syntax instead.
+  * Never use quotes, brackets, or decorative symbols.
+- DYNAMIC SENTENCE ARCHITECTURE & ANTI-REPETITION:
+  * NEVER start titles with repetitive formulaic openers like "Autumn harvest...", "Happy Thanksgiving...", "Autumn border...", "Fall background...", "Cute...", "Set of...", "Vector illustration of...", "A photo of...", "Isolated...", "Vibrant...", or "Festive...".
+  * Weave thematic words into the middle/qualifier position of the sentence.
+  * Dynamically rotate across 5 sentence entry points:
+    1. Object/Detail First: Lead with concrete focal elements (e.g., "Pomegranates Walnuts and Gourds Arranged on Rustic Wood for Thanksgiving Dinner")
+    2. Layout/Composition First: Lead with perspective/framing (e.g., "Top Down Flat Lay of Golden Maple Leaves with Generous Copy Space on Dark Slate")
+    3. Artistic Style First: Lead with rendering medium (e.g., "Watercolor Botanical Frame Featuring Orange Pumpkins and Foliage for Autumn Holiday")
+    4. Concept/Mood First: Lead with atmospheric concept (e.g., "Warm Harvest Season Celebration Concept with Pinecones and Cinnamon Sticks")
+    5. Color/Texture First: Lead with background or color harmony (e.g., "Dark Purple Background Framed with Seasonal Fall Produce and Fresh Herbs")
 
 === 2. HIGH-PRECISION MICRO-VISUAL EXTRACTION ===
-Force deep visual scrutiny to extract the exact micro-details that make this specific file unique from every other file:
-- Exact Surface & Background Texture: Explicitly identify and name the background or table surface (e.g., rustic wood table, black slate stone, dark textured chalkboard, navy backdrop, aged parchment, marble countertop, rough burlap fabric, clean isolated white ground).
-- Exact Produce, Flora & Item Inventory: Identify the precise varieties and objects visibly present (e.g., pomegranate, sunflower, golden wheat, cornucopia, striped pumpkin, acorn squash, dry pinecones, walnuts, whole cinnamon sticks, cranberries, star anise). Never use vague generic terms like "various elements" or "seasonal produce".
-- Lighting & Atmosphere: Note distinctive illumination (e.g., dramatic smoke clouds, warm volumetric glow, directional sunlight, moody chiaroscuro shadows, soft overhead studio lighting, rim-lit contours).
-- Art Style & Medium: Distinguish exact technique (e.g., watercolor painting, 3D render, macro photograph, flat vector illustration, chalk drawing, linocut print).
-- 100% Visual Fidelity: Describe ONLY what is genuinely visible in the artwork. Never hallucinate absent items.
+Extract tangible micro-details that make this specific file unique:
+- Surface & Ground Texture: rustic wood, black slate, chalkboard, navy backdrop, aged parchment, marble counter, burlap fabric, isolated white ground.
+- Flora, Food & Object Inventory: specific botanical varieties and items (e.g., pomegranate, sunflower, golden wheat, cornucopia, striped pumpkin, acorn squash, dry pinecones, walnuts, whole cinnamon sticks, cranberries, star anise).
+- Lighting & Atmosphere: dramatic chiaroscuro shadows, warm volumetric glow, soft studio illumination, rim lighting.
+- Visual Fidelity: Describe ONLY what is genuinely visible in the artwork. Never hallucinate absent items.
 
-=== 3. UNIQUE & CONTEXT-DRIVEN KEYWORDS (TAGS) ===
-Provide EXACTLY ${targetKwCount} unique, high-traffic commercial tags. Adobe Stock and Shutterstock algorithms weigh the first 10 keywords most heavily.
-Structure the keywords in strict descending SEO hierarchy:
-- Tier 1 (Tags 1–10 - Primary SEO Weight): Specific, distinctive visual elements and micro-detail nouns MUST be placed at the very top of the tag list (e.g., "pomegranate", "chalkboard", "wood texture", "sunflower", "pinecone", "walnut", "cinnamon") BEFORE generic thematic tags ("autumn", "thanksgiving").
-- Tier 2 (Tags 11–25 - Specific Visual Attributes & Textures): Exact materials, surface textures, color descriptions, lighting styles, compositions, and art mediums (e.g., "rustic wood", "dark slate", "flat lay", "watercolor style", "top down view", "golden glow", "copy space").
-- Tier 3 (Tags 26–40 - Commercial Applications & Buyer Intent): Real-world buyer search intents and product applications (e.g., "recipe card", "food blogging", "restaurant menu", "autumn sale", "greeting card design", "packaging print", "editorial banner").
-- Tier 4 (Tags 41–${targetKwCount} - Conceptual Synonyms & Broader Seasonal Context): General seasonal, holiday, and atmospheric search terms without fluff (e.g., "harvest time", "autumn season", "thanksgiving holiday", "fall celebration", "cozy vibes").
-- Tailored & Non-Identical: The generated keyword set for each file MUST be tailored and non-identical across the batch.
-- Strictly lowercase, single words or 2-word phrases only, no commas inside tags, no duplicates, NO trademarked brand names (no Apple, Disney, Nike, etc.), NO spam/negative tags.
+=== 3. AUTOMATED ADOBE STOCK CATEGORY ASSIGNMENT (1 TO 21) ===
+Analyze the visual asset and map it strictly to one of the 21 official Adobe Stock Categories:
+1. Animals
+2. Buildings and Architecture
+3. Business
+4. Drinks
+5. Environment
+6. States of Mind
+7. Food
+8. Graphic Resources (use for icons, UI kits, abstract backgrounds, vectors, textures, design elements, templates)
+9. Hobbies and Leisure
+10. Industry
+11. Landscapes
+12. Lifestyle
+13. People
+14. Plants and Flowers
+15. Culture and Religion
+16. Science
+17. Social Issues
+18. Sports
+19. Technology
+20. Transport
+21. Travel
 
-=== 4. STRICT MICROSTOCK COMPLIANCE RULES ===
-- Title: Exactly ONE clear, commercial sentence (60–90 characters optimal, max 100 characters).
-  * Packed with top relevant search keywords.
-  * CRITICAL FOR MICROSTOCK: STRICTLY NEVER include commas in the title (Adobe Stock forbids commas and will reject the file). Replace commas with "and", "with", or natural flow.
-  * No quotation marks or special punctuation.
-- Description: 1–2 clean sentences accurately detailing the visual composition, specific textures, lighting, and commercial design utility.
-- Keywords: Exactly ${targetKwCount} tags following the strict hierarchy above.
-- Category: Accurate primary microstock category (e.g., Graphic Resources, Backgrounds/Textures, Holidays, Animals, Food, Architecture, Business, Technology, Lifestyle).
+Output the exact official category name in "category" and its corresponding number (1-21) in "category_id".
+
+=== 4. UNIQUE & CONTEXT-DRIVEN KEYWORDS (TAGS) ===
+Provide EXACTLY ${targetKwCount} unique, high-traffic commercial tags in strict descending SEO hierarchy:
+- Tier 1 (Tags 1–10 - Primary SEO Weight): Specific, distinctive visual elements and micro-detail nouns (e.g., "pomegranate", "chalkboard", "wood texture", "sunflower", "pinecone", "walnut", "cinnamon").
+- Tier 2 (Tags 11–25 - Visual Attributes & Textures): Materials, surface textures, colors, lighting, art mediums (e.g., "rustic wood", "dark slate", "flat lay", "watercolor style", "top down view", "golden glow", "copy space").
+- Tier 3 (Tags 26–40 - Commercial Applications): Buyer search intents (e.g., "recipe card", "food blogging", "restaurant menu", "autumn sale", "greeting card design", "packaging print", "editorial banner").
+- Tier 4 (Tags 41–${targetKwCount} - Broad Seasonal Context): General thematic and conceptual terms without fluff (e.g., "harvest time", "autumn season", "thanksgiving holiday", "fall celebration", "cozy vibes").
+- Format: Strictly lowercase, single words or 2-word phrases only, no commas inside tags, no duplicates, NO trademarked brand names (no Apple, Nike, etc.), NO spam.
 
 Filename: "${filename}"
 Unique File Fingerprint (SHA256 Hash Seed): ${fileHash}
@@ -595,17 +609,19 @@ ${isVector ? `Asset Format: Scalable Vector Graphic / Artwork Asset.` : ''}
 ${vectorSemanticText ? `\n--- EMBEDDED VECTOR FILE PROPERTIES & METADATA ---\n${vectorSemanticText}\n-----------------------------------------------` : ''}
 ${customPromptHint ? `Custom Guidance: ${customPromptHint}` : ''}
 
-CRITICAL ANTI-REPETITION INSTRUCTIONS FOR THIS ASSET:
-1. Dynamic Sentence Architecture: FORBID starting with repetitive formulas like "Autumn harvest...", "Happy Thanksgiving...", "Autumn border...", "Fall background...", "Cute...", or "Set of...". Dynamically select and rotate across the 5 entry points (Object/Detail First, Layout/Composition First, Artistic Style First, Concept/Mood First, or Color/Texture First) to make this title 100% distinct.
-2. High-Precision Micro-Visual Extraction: Identify the exact surface textures (e.g., rustic wood table, black slate, chalkboard, navy backdrop), exact produce/botanical elements (e.g., pomegranate, sunflower, wheat, cornucopia), lighting (e.g., warm volumetric glow, dramatic smoke), and art style.
-3. Micro-Detail Tags First: Place specific visual nouns (e.g., "pomegranate", "chalkboard", "wood texture") at the top of the keywords list (Tags 1-10) before generic thematic tags ("autumn", "thanksgiving").
-4. Strict Compliance: Exactly ONE title sentence (60-90 chars) with STRICTLY NO COMMAS. Exactly ${targetKwCount} unique lowercase keywords. Valid JSON response only.
+CRITICAL EXECUTION CHECKLIST:
+1. Expanded Title (80-100 chars): Rich, descriptive, full-length commercial title packed with visual detail (80-100 characters, strictly max 100). STRICTLY ZERO COMMAS in the title.
+2. Adobe Stock Category: Assign the most accurate official Adobe Stock category (1 of the 21 official categories) with exact category name and numeric category_id (1-21).
+3. Anti-Repetition: Do not use generic openers ("Autumn harvest...", "Cute...", "Set of..."). Rotate sentence entry points based on composition.
+4. Micro-Detail Tags First: Place specific visual nouns at the top of the tag list (Tags 1-10) before general themes. Exactly ${targetKwCount} lowercase tags.
 
 JSON Response Format:
 {
-  "title": "Distinctive commercial title without any commas",
-  "description": "Vivid commercial description highlighting specific micro-textures, lighting, and microstock design applications.",
+  "title": "Rich descriptive commercial title between 80 and 100 characters without any commas",
+  "description": "Vivid commercial description detailing specific visual composition, micro-textures, lighting, and stock design applications.",
   "keywords": ["tag1", "tag2", ...],
+  "category": "Graphic Resources",
+  "category_id": 8,
   "category_guess": "Graphic Resources"
 }`;
 
